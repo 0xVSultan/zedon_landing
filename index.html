@@ -649,20 +649,86 @@
     } catch (e) {}
     if (isStandalone()) markInstalled("standalone");
 
-    function printManualInstallHelp() {
-      if (isIOS()) {
-        print("iOS has no install API. Do it by hand:", "sys");
-        print("  Share (□↑) → Add to Home Screen");
+    async function diagnoseInstall() {
+      const ua = navigator.userAgent;
+      if (/firefox/i.test(ua) && !isAndroid()) {
+        print("Firefox desktop cannot install web apps. Use Chrome, Edge or another Chromium browser.", "warn");
+      } else if (/safari/i.test(ua) && !/chrom|crios|edg|android/i.test(ua) && !isIOS()) {
+        print("Safari (macOS) has no install prompt. Use File → Add to Dock.", "warn");
+      }
+      if (location.protocol === "file:") {
+        print("Page opened from a file:// URL. Installing needs https:// (or http://localhost).", "err");
+        return;
+      }
+      if (location.protocol !== "https:" && !/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) {
+        print("Page is not served over HTTPS. Installing needs a secure origin.", "err");
+      }
+      const link = document.querySelector('link[rel="manifest"]');
+      if (!link) { print("No <link rel=\"manifest\"> in the page.", "err"); return; }
+      const mUrl = link.href;
+      let m;
+      try {
+        const r = await fetch(mUrl, { credentials: "same-origin" });
+        if (!r.ok) { print("Manifest not reachable: HTTP " + r.status + "  " + mUrl, "err"); return; }
+        m = await r.json();
+      } catch (e) {
+        print("Manifest fetch/parse failed: " + (e.message || e) + "  " + mUrl, "err");
+        return;
+      }
+      const problems = [];
+      const modes = ["standalone", "fullscreen", "minimal-ui", "window-controls-overlay"];
+      if (!(m.name || m.short_name)) problems.push("name / short_name missing");
+      if (!m.start_url) problems.push("start_url missing");
+      const dispOk = modes.indexOf(m.display) !== -1 ||
+        (Array.isArray(m.display_override) && m.display_override.some(function (d) { return modes.indexOf(d) !== -1; }));
+      if (!dispOk) problems.push('display is "' + (m.display || "browser (default)") + '", it must be "standalone"');
+      const icons = Array.isArray(m.icons) ? m.icons : [];
+      function findIcon(n) {
+        return icons.find(function (i) {
+          return String(i.sizes || "").split(/\s+/).some(function (sz) { return parseInt(sz, 10) >= n; });
+        });
+      }
+      for (const n of [192, 512]) {
+        const ic = findIcon(n);
+        if (!ic || !ic.src) { problems.push("no " + n + "x" + n + " icon in the manifest"); continue; }
+        const u = new URL(ic.src, mUrl).href;
+        try {
+          const r = await fetch(u);
+          const ct = (r.headers && r.headers.get && r.headers.get("content-type")) || "image/";
+          if (!r.ok) problems.push(n + "px icon not reachable: HTTP " + r.status + "  " + u);
+          else if (!/^image\//i.test(ct)) problems.push(n + "px icon is not an image (" + ct + ")  " + u);
+        } catch (e) {
+          problems.push(n + "px icon fetch failed  " + u);
+        }
+      }
+      if (problems.length) {
+        print("Manifest problems found:", "err");
+        problems.forEach(function (x) { print("  - " + x, "err"); });
       } else {
-        print("This browser did not offer an install prompt.", "warn");
-        print("Try the browser menu → 'Install app' / 'Add to Home screen'.", "sys");
-        print("(Not every browser supports installing web apps, and it is", "sys");
-        print(" not offered if the app is already installed.)", "sys");
+        print("Manifest looks fine (" + mUrl + ").", "info");
+        print("Then it is probably already installed, or the browser has not offered the prompt yet.", "sys");
+        print("Reload the page and run 'install' again, or use the install icon in the address bar.", "sys");
       }
     }
 
+    async function printManualInstallHelp() {
+      if (isIOS()) {
+        print("iOS has no install API. Do it by hand:", "sys");
+        print("  Share (□↑) → Add to Home Screen");
+        return;
+      }
+      print("The browser did not offer an install prompt. Checking why...", "warn");
+      await diagnoseInstall();
+    }
+
     async function runInstall() {
-      if (!deferredPrompt) { printManualInstallHelp(); return; }
+      if (!deferredPrompt) {
+        busy = true;
+        input.disabled = true;
+        try { await printManualInstallHelp(); }
+        finally { busy = false; input.disabled = false; input.focus(); }
+        return;
+      }
       const dp = deferredPrompt;
       deferredPrompt = null; // the event is single-use
       busy = true;
