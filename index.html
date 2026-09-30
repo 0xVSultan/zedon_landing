@@ -77,6 +77,7 @@
     .line.warn { color: var(--warn); }
     .line.sys { color: #6a9; }
     .line.info { color: #8cf; }
+    .secret { -webkit-text-security: disc; text-security: disc; }   /* masked without being a password field */
     .line.gold { color: var(--warn); }                 /* the golden brown also used for panel titles and warnings */
     /* help: command name (gold) + description in their own columns, so wrapped text keeps a hanging indent */
     .line.help-row { display: flex; gap: 1ch; padding-left: 2ch; white-space: normal; }
@@ -218,7 +219,7 @@
     <div id="terminal" aria-live="polite">
       <div class="input-row" id="inputRow">
         <span class="prompt" id="promptLabel">guest@zedon.tech:~$</span>
-        <input type="text" id="cmd" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" autofocus />
+        <input type="text" id="cmd" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" autofocus />
       </div>
     </div>
 
@@ -233,7 +234,7 @@
         <textarea id="decodeCipher" placeholder="Paste encrypted message here..."></textarea>
         <div id="decodePassWrap">
           <label id="decodePassLabel" for="decodePass">Passphrase (optional: leave empty to use login password)</label>
-          <input type="password" id="decodePass" placeholder="Leave empty to use session password" />
+          <input type="text" class="secret" id="decodePass" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" placeholder="Leave empty to use session password" />
         </div>
         <div class="result" id="decodeResult"></div>
         <div class="actions">
@@ -250,7 +251,7 @@
         <textarea id="importKey" placeholder="Paste your private key here..."></textarea>
         <div id="importPreview" class="nc-note"></div>
         <label for="importPass">Passphrase of THIS key (may differ from your login password; empty if the key is not protected)</label>
-        <input type="password" id="importPass" placeholder="Key passphrase" />
+        <input type="text" class="secret" id="importPass" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" placeholder="Key passphrase" />
         <label class="check" id="importPublishRow"><input type="checkbox" id="importPublish" checked /> Use as my registered key (publish its public part)</label>
         <div class="result" id="importResult"></div>
         <div class="actions">
@@ -266,10 +267,12 @@
         <label for="messageTo">To</label>
         <select id="messageTo"></select>
         <div id="messagePgp" class="nc-note"></div>
+        <label class="check" id="messagePlainRow" style="display:none"><input type="checkbox" id="messagePlain" /> Send it UNENCRYPTED anyway (I understand that everyone on the way can read it)</label>
+        <div id="messageRetryRow" style="display:none"><button type="button" class="secondary" id="messageRetry">Retry the key download</button></div>
         <label for="messageSubject">Subject (sent in clear text, it becomes the email subject)</label>
-        <input type="text" id="messageSubject" maxlength="120" autocomplete="off" enterkeyhint="next" />
+        <input type="text" id="messageSubject" maxlength="120" enterkeyhint="next" autocomplete="off" autocapitalize="sentences" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" />
         <label for="messageBody">Message</label>
-        <textarea id="messageBody" placeholder="Write your message..."></textarea>
+        <textarea id="messageBody" placeholder="Write your message..." autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other"></textarea>
         <div class="result" id="messageResult"></div>
         <div class="actions">
           <button type="button" class="secondary" id="messageCancel">Cancel</button>
@@ -285,6 +288,16 @@
         <div id="historyHint" class="nc-hint"><span class="hint-kb">Up/Down: select   Enter: open/close   Esc: close   (or tap)</span><span class="hint-touch">Tap a message to open or close it</span></div>
         <div class="actions">
           <button type="button" class="secondary" id="historyClose">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="endScreen">
+      <div class="nc" data-title="Session ended" data-cols="56">
+        <div class="nc-info">Your session is closed and the screen is cleared.</div>
+        <div class="nc-info">A web page cannot close its own browser tab (only an installed app window, or a tab opened by a script, allows it). Close this tab yourself: Ctrl+W (Cmd+W on a Mac) or the x on the tab.</div>
+        <div class="actions">
+          <button type="button" id="endRestart">Start again</button>
         </div>
       </div>
     </div>
@@ -308,6 +321,15 @@
     const INSTALL_KEY = "zedon_install_v1";
     const TURNSTILE_SITE_KEY = "0x4AAAAAAFKP8YyP93rHLcry"; // public; the secret lives in the Worker
     const TOKEN_KEY = "zedon_token_v1";
+    const KEYCACHE_KEY = "zedon_keys_v1";
+    // A password-type field makes the browser offer to "save the password", and it mistook the terminal line and the
+    // message fields for a login form (subject as user name, message as password). Secrets are therefore masked by CSS
+    // on an ordinary text field. Only a browser that cannot mask text falls back to type=password.
+    const MASK_OK = !!(window.CSS && CSS.supports && (CSS.supports("-webkit-text-security", "disc") || CSS.supports("text-security", "disc")));
+    function setSecret(on) {
+      input.classList.toggle("secret", !!on);
+      input.type = on && !MASK_OK ? "password" : "text";
+    }
     // Username registry lives on the same Worker (…/users/check, …/users/register)
     const API_BASE = WORKER_URL.replace(/\/send\/?$/, "");
     async function registryCall(path, body) {
@@ -479,7 +501,7 @@
       interactive = null;
       restoreCtx = null;
       document.getElementById("importModal").classList.remove("open");
-      input.type = "text";
+      setSecret(false);
       refreshPrompt();
     }
     /** Ask the Worker to email a registration code. Returns true when it was sent. */
@@ -615,7 +637,7 @@
       }
       if (outcome === "retry") {
         interactive = { step: "reg_retry", data: d };
-        input.type = "text";
+        setSecret(false);
         promptLabel.textContent = "retry>";
         print("Your key is ready and the verified email stays valid for a while. Type 'retry' to try again, or 'cancel' to stop.", "warn");
       } else {
@@ -626,7 +648,7 @@
       print("Your session is not verified (first login here, or the 30-day verification expired).", "sys");
       if (await requestLoginOtp(session.name, maskEmail(session.email))) {
         interactive = { step: "login_otp", data: {} };
-        input.type = "text";
+        setSecret(false);
         print("The code proves the account is yours, so the server accepts your messages.", "sys");
         print("Enter the code ('resend' for a new one; 'cancel' keeps you logged in, unverified):");
         promptLabel.textContent = "code>";
@@ -667,7 +689,7 @@
       if (!ok) { resetInteractive(); return; }
       if (!(await requestLoginOtp(name, "the email address registered for this account"))) { resetInteractive(); return; }
       interactive = { step: "restore_otp", data: { name: name } };
-      input.type = "text";
+      setSecret(false);
       print("Enter the code ('resend' for a new one, 'cancel' to stop):");
       promptLabel.textContent = "code>";
     }
@@ -747,6 +769,7 @@
       document.documentElement.style.setProperty("--vvh", (vv ? vv.height : window.innerHeight) + "px");
     }
     document.querySelectorAll(".nc").forEach(ncBuild);
+    if (!MASK_OK) ["decodePass", "importPass"].forEach(function (id) { document.getElementById(id).type = "password"; });
     ncLayout();
     window.addEventListener("resize", ncLayout);
     syncViewport();
@@ -767,6 +790,7 @@
     }
     async function queryTXT(hostname) {
       const r = await queryDNSRecords(hostname, "TXT");
+      if (r.Status === 2 || r.Status === 5) throw new Error("the DNS server answered with status " + r.Status + " (SERVFAIL / REFUSED)");
       if (r.Status !== DOHStatus.NoError) return [];
       return (r.Answer || []).map(a => {
         try { return JSON.parse(a.data); } catch { return String(a.data).replace(/^"|"$/g, ""); }
@@ -870,8 +894,29 @@
       return norm ? norm.slice(-16) : "(?)";
     }
     /** Resolve remote user PGP: fetch URL if needed, verify against DNS fingerprint */
+    // Keys that were downloaded AND matched the fingerprint in DNS, kept on this device as a fallback.
+    function loadKeyCache() { try { return JSON.parse(localStorage.getItem(KEYCACHE_KEY) || "{}") || {}; } catch (e) { return {}; } }
+    function saveKeyCache(name, armored, fp) {
+      try {
+        const c = loadKeyCache();
+        c[String(name).toLowerCase()] = { armored: armored, fp: fp, ts: Date.now() };
+        localStorage.setItem(KEYCACHE_KEY, JSON.stringify(c));
+      } catch (e) {}
+    }
+    function cachedKeyFor(name, expectedFp) {
+      if (!expectedFp) return null;                                   // without a DNS fingerprint a cached key cannot be checked
+      const e = loadKeyCache()[String(name).toLowerCase()];
+      return e && e.armored && e.fp && fingerprintsMatch(expectedFp, e.fp) ? e.armored : null;
+    }
+    /** The browser could not reach the key (CORS / network / mixed content): let the Worker download it. */
+    async function fetchKeyViaServer(url) {
+      if (!session || !hasUserToken()) throw new Error("your session is not verified");
+      const r = await registryCall("/keys/fetch", { url: url, user_token: session.userToken });
+      if (!r.ok) throw new Error((r.data && r.data.error) ? r.data.error : "HTTP " + r.status);
+      return r.data.armored;
+    }
     async function resolveRecipientPublicKey(target, log) {
-      log = log || print;
+      log = log || function () {};
       if (!target) return null;
       // LOCAL session key already armored
       if (target.source === "LOCAL" && target.pgp && /BEGIN PGP/.test(target.pgp)) {
@@ -883,31 +928,62 @@
 
       if (ref && /^https?:\/\//i.test(ref)) {
         log("Fetching PGP key: " + ref, "sys");
-        const res = await fetch(ref, { credentials: "omit" });
-        if (!res.ok) throw new Error("Key fetch failed HTTP " + res.status);
-        armored = (await res.text()).trim();
-        if (!/BEGIN PGP PUBLIC KEY BLOCK/.test(armored)) {
-          throw new Error("Fetched file is not an armored public key");
+        let text = null;
+        let directErr = null;
+        try {
+          const res = await fetch(ref, { credentials: "omit" });
+          if (!res.ok) {
+            const he = new Error("Key fetch failed: HTTP " + res.status + " (" + ref + ")");
+            he.http = res.status;                                         // the host answered: a server fallback would not help
+            throw he;
+          }
+          text = await res.text();
+        } catch (e) {
+          directErr = e;
+        }
+        if (text === null) {
+          let why = directErr && directErr.message ? directErr.message : String(directErr);
+          const cached = cachedKeyFor(target.name, expectedFp);
+          if (directErr && !directErr.http) {
+            log("The browser could not download the key (network, CORS or mixed content). Asking the server to download it...", "warn");
+            try {
+              text = await fetchKeyViaServer(ref);
+            } catch (e2) {
+              why = "the browser failed (" + why + ") and the server could not get it either (" + (e2.message || e2) + ")";
+            }
+          }
+          if (text === null) {
+            if (!cached) throw new Error("Could not download the PGP key of " + target.name + ": " + why);
+            log("Download failed; using the copy kept on this device (its fingerprint must match the DNS record).", "warn");
+            armored = cached;
+          }
+        }
+        if (armored === null) {
+          armored = String(text).trim();
+          if (!/BEGIN PGP PUBLIC KEY BLOCK/.test(armored)) {
+            throw new Error("The downloaded file is not an armored PGP public key (" + ref + ")");
+          }
         }
       } else if (ref && /BEGIN PGP PUBLIC KEY BLOCK/.test(ref)) {
         armored = ref;
       } else if (!ref && expectedFp) {
-        throw new Error("Only fingerprint in DNS — provide PGP=<https://...url.asc>");
+        throw new Error("Only a fingerprint is published in DNS: provide PGP=<https://...url.asc>");
       } else {
         return null;
       }
 
       const actualFp = await fingerprintOfArmored(armored);
-      if (!actualFp) throw new Error("Could not read fingerprint from key");
+      if (!actualFp) throw new Error("Could not read the fingerprint of the key");
 
       if (expectedFp) {
         if (!fingerprintsMatch(expectedFp, actualFp)) {
           throw new Error(
-            "Fingerprint mismatch! DNS=" + normalizeFp(expectedFp).slice(-16) +
-            " key=" + actualFp.slice(-16)
+            "FINGERPRINT MISMATCH: the key is not the one published in DNS (DNS=" + normalizeFp(expectedFp).slice(-16) +
+            ", key=" + actualFp.slice(-16) + ")"
           );
         }
         log("PGP fingerprint OK: " + actualFp.slice(-16), "info");
+        saveKeyCache(target.name, armored, actualFp);
       } else {
         log("PGP fingerprint (no DNS fp to check): " + actualFp.slice(-16), "warn");
       }
@@ -915,6 +991,9 @@
     }
 
     let remoteUsers = [];
+    let remoteState = "idle";       // idle | loading | ok | failed (the DNS records with the recipients and their keys)
+    let remoteError = "";
+    let remoteLoading = null;
     let currentUser = "guest";
     let session = null;
     let cmdHistory = [];
@@ -1088,8 +1167,10 @@
       };
     }
 
-    async function loadRemoteUsers() {
-      print("DNS TXT query: " + DOMAIN + " ...", "sys");
+    async function loadRemoteUsers(quiet) {
+      const say = quiet ? function () {} : print;
+      remoteState = "loading";
+      say("DNS TXT query: " + DOMAIN + " ...", "sys");
       try {
         const txts = await queryTXT(DOMAIN);
         remoteUsers = [];
@@ -1104,11 +1185,21 @@
         for (const u of remoteUsers) {
           try { if (u.pgp && /BEGIN PGP/.test(u.pgp)) await primeFingerprint(u.pgp); } catch (e) {}
         }
-        print("  " + remoteUsers.length + " user record(s) found.", "sys");
+        remoteState = "ok";
+        say("  " + remoteUsers.length + " user record(s) found.", "sys");
       } catch (e) {
-        print("DNS error: " + (e.message || e), "warn");
+        remoteError = String(e.message || e);
+        remoteState = "failed";
+        say("DNS error: " + remoteError, "warn");
         remoteUsers = [];
       }
+    }
+    /** Make sure the DNS records are loaded (the start-up query may still be running, or may have failed). */
+    function ensureRemoteUsers(force) {
+      if (remoteLoading) return remoteLoading;
+      if (!force && remoteState === "ok") return Promise.resolve();
+      remoteLoading = loadRemoteUsers(true).then(function () { remoteLoading = null; }, function () { remoteLoading = null; });
+      return remoteLoading;
     }
 
     function findUser(name) {
@@ -1288,7 +1379,7 @@
           ["install", "install as an app (asks to confirm)"],
           ["uninstall", "clean up app data + how to remove it (asks to confirm)"],
           ["purge", "wipe all local data (GDPR)"],
-          ["exit", "close this tab/window"]
+          ["exit", "end the session and close this tab/window (the browser only allows closing for an installed app or a fresh tab; otherwise the screen is cleared)"]
         ].forEach(function (r) { printHelpRow(r[0], r[1]); });
       },
       whoami: function () {
@@ -1413,7 +1504,7 @@
         print("Register: " + name, "sys");
         print("Email address (a one-time code will be sent to it):");
         promptLabel.textContent = "email>";
-        input.type = "text";
+        setSecret(false);
       },
       login: function (args) {
         if (session) { print("Already logged in (" + session.name + "). Use: logout", "err"); return; }
@@ -1431,7 +1522,7 @@
           print("If your session is not verified, an emailed code is asked next ('help login' explains).", "sys");
           print("Password:");
           promptLabel.textContent = "password>";
-          input.type = "password";
+          setSecret(true);
           return;
         }
         if (remoteUsers.some(function (u) { return u.name.toLowerCase() === name.toLowerCase(); })) {
@@ -1530,13 +1621,10 @@
             setTimeout(tick, 1000);
           } else {
             countLine.textContent = "0";
-            window.close();
-            setTimeout(function () {
-              print("Browser blocked window.close(). Close the tab manually.", "warn");
-              busy = false;
-              input.disabled = false;
-              input.focus();
-            }, 400);
+            try { window.close(); } catch (e) {}
+            // Browsers only let a page close its own window when a script opened it, or when it is an installed app
+            // window / a tab with a single history entry. If we are still here, end the session and say so.
+            setTimeout(showEndScreen, 400);
           }
         }
         setTimeout(tick, 1000);
@@ -1582,7 +1670,7 @@
           return;
         }
         interactive.step = "reg_otp";
-        input.type = "text";
+        setSecret(false);
         print("Enter the 6-digit code ('resend' for a new one, 'cancel' to stop):");
         promptLabel.textContent = "code>";
         return;
@@ -1605,7 +1693,7 @@
             print("Now choose a password for this device (min 6 chars). It protects your PGP key and messages in this browser:");
             interactive.step = "reg_pass";
             promptLabel.textContent = "password>";
-            input.type = "password";
+            setSecret(true);
           } else if (r.status === 400 && r.data.reason === "otp") {
             print("Wrong code" + (typeof r.data.attempts_left === "number" ? " (" + r.data.attempts_left + " attempt(s) left)" : "") + ". Try again or type 'resend'.", "err");
           } else if (r.status === 410) {
@@ -1656,7 +1744,7 @@
           return;
         }
         busy = false;
-        input.type = "text";
+        setSecret(false);
         print("Key fingerprint: " + fingerprintShort(d.keys.publicKey), "sys");
         await completeRegistration(d);
         return;
@@ -1692,7 +1780,7 @@
             print("Choose a NEW password for this device (min 6 chars). It only protects the keys stored in this browser:");
             interactive.step = "restore_pass";
             promptLabel.textContent = "password>";
-            input.type = "password";
+            setSecret(true);
           } else if (r.status === 400 && r.data.reason === "otp") {
             print("Wrong code" + (typeof r.data.attempts_left === "number" ? " (" + r.data.attempts_left + " attempt(s) left)" : "") + ". Try again or type 'resend'.", "err");
           } else if (r.status === 410) {
@@ -1726,7 +1814,7 @@
           return;
         }
         interactive.step = "restore_choice";
-        input.type = "text";
+        setSecret(false);
         promptLabel.textContent = "restore>";
         printRestoreOptions(d);
         return;
@@ -1776,7 +1864,7 @@
         }
         if (!keys) {
           interactive.step = "restore_choice";
-          input.type = "text";
+          setSecret(false);
           promptLabel.textContent = "restore>";
           printRestoreOptions(d);
           return;
@@ -1866,6 +1954,7 @@
         refreshPrompt();
         if (t === "YES") {
           localStorage.removeItem(STORAGE_KEY);
+          try { localStorage.removeItem(KEYCACHE_KEY); } catch (e) {}
           clearToken();
           session = null;
           currentUser = "guest";
@@ -2133,6 +2222,10 @@
     let msgDraft = null;             // the history entry of the panel session (kept across retries)
     let msgSending = false;
     let msgSaved = null;             // unsent text, restored when the panel is opened again
+    // What is known about the selected recipient's PGP key:
+    //   ready  → the message body is encrypted;   nokey → no key is published, plaintext only after an explicit tick;
+    //   error  → a key is published but unavailable: NOTHING is sent;   loading → wait.
+    const keyState = { seq: 0, to: null, status: "loading", armored: null, fp: null, error: "" };
 
     function messageRecipients() {
       const out = [];
@@ -2141,22 +2234,77 @@
       });
       return out.length ? out : [{ name: "info", role: "" }, { name: "zoltan.vass", role: "" }];
     }
-    function updateMessageRecipientInfo() {
-      const to = document.getElementById("messageTo").value;
+    function populateRecipients(selected) {
+      const sel = document.getElementById("messageTo");
+      const before = selected || sel.value;
+      sel.textContent = "";
+      const rec = messageRecipients();
+      rec.forEach(function (r) {
+        const o = document.createElement("option");
+        o.value = r.name;
+        o.textContent = r.role ? r.name + "  (" + r.role + ")" : r.name;
+        sel.appendChild(o);
+      });
+      if (before && rec.some(function (r) { return r.name === before; })) sel.value = before;
+      return rec;
+    }
+    function renderKeyState() {
       const box = document.getElementById("messagePgp");
-      const d = document.createElement("div");
-      const target = findUser(to);
-      if (target && (target.pgp || target.pgpUrl || target.pgpFp)) {
-        let tail = "";
-        if (target.pgpFp) tail = " (key ..." + normalizeFp(target.pgpFp).slice(-16) + ")";
-        else if (target.pgp && /BEGIN PGP/.test(target.pgp)) tail = " (key ..." + fingerprintShort(target.pgp) + ")";
-        d.textContent = "PGP: the message body will be encrypted for " + to + tail + ".";
-      } else {
-        d.className = "nc-warnline";
-        d.textContent = "!! No PGP key known for " + to + ": the message body is sent as PLAINTEXT.";
-      }
+      const to = keyState.to || "";
       box.textContent = "";
-      box.appendChild(d);
+      document.getElementById("messagePlainRow").style.display = "none";
+      document.getElementById("messageRetryRow").style.display = "none";
+      function add(text, cls) {
+        const d = document.createElement("div");
+        if (cls) d.className = cls;
+        d.textContent = text;
+        box.appendChild(d);
+      }
+      if (keyState.status === "loading") {
+        add(remoteState === "ok" ? "Checking the PGP key of " + to + "..." : "Loading the recipient list and the PGP keys (DNS)...");
+      } else if (keyState.status === "ready") {
+        add("PGP: the message body will be encrypted for " + to + " (key ..." + keyState.fp.slice(-16) + ").");
+      } else if (keyState.status === "nokey") {
+        add("!! No PGP key is published for " + to + ": the message would go out UNENCRYPTED.", "nc-alert");
+        document.getElementById("messagePlainRow").style.display = "";
+      } else {
+        add("!! " + keyState.error, "nc-alert");
+        add("Nothing is sent while the key is unavailable, because it would go out unencrypted.", "nc-warnline");
+        document.getElementById("messageRetryRow").style.display = "";
+      }
+    }
+    async function prepareRecipientKey(to) {
+      const seq = ++keyState.seq;
+      Object.assign(keyState, { to: to, status: "loading", armored: null, fp: null, error: "" });
+      document.getElementById("messagePlain").checked = false;
+      renderKeyState();
+      if (remoteState === "failed") {
+        keyState.status = "error";
+        keyState.error = "Could not load the recipient records from DNS: " + remoteError;
+        renderKeyState();
+        return;
+      }
+      try {
+        const target = findUser(to);
+        if (!target || !(target.pgp || target.pgpUrl || target.pgpFp)) {
+          if (seq === keyState.seq) keyState.status = "nokey";
+        } else {
+          const armored = await resolveRecipientPublicKey(target, function () {});
+          if (seq !== keyState.seq) return;
+          if (!armored) {
+            keyState.status = "nokey";
+          } else {
+            keyState.armored = armored;
+            keyState.fp = await fingerprintOfArmored(armored);
+            keyState.status = "ready";
+          }
+        }
+      } catch (e) {
+        if (seq !== keyState.seq) return;
+        keyState.status = "error";
+        keyState.error = String(e.message || e);
+      }
+      if (seq === keyState.seq) renderKeyState();
     }
     function openMessagePanel(pre) {
       if (!session) { print("Guests cannot send messages. Use: register <name> or login <name>", "err"); return; }
@@ -2166,14 +2314,7 @@
       const subj = document.getElementById("messageSubject");
       const area = document.getElementById("messageBody");
       const res = document.getElementById("messageResult");
-      sel.textContent = "";
-      const rec = messageRecipients();
-      rec.forEach(function (r) {
-        const o = document.createElement("option");
-        o.value = r.name;
-        o.textContent = r.role ? r.name + "  (" + r.role + ")" : r.name;
-        sel.appendChild(o);
-      });
+      const rec = populateRecipients(null);
       msgDraft = null;
       let to = null, subject = "", body = "", restored = false;
       const args = (pre && pre.args) || [];
@@ -2191,9 +2332,20 @@
       document.getElementById("messageInfo").textContent =
         "From " + session.name + " (" + maskEmail(session.email) + "), verified. Only the message body is PGP-encrypted; the subject travels in clear text." +
         (restored ? " Your unsent draft was restored." : "");
-      updateMessageRecipientInfo();
       document.getElementById("messageModal").classList.add("open");
       (subject ? area : subj).focus();
+      if (remoteState === "ok") {
+        prepareRecipientKey(sel.value);
+      } else {                                              // the DNS records are still loading, or failed at start-up
+        keyState.to = sel.value;
+        keyState.status = "loading";
+        renderKeyState();
+        ensureRemoteUsers(remoteState === "failed").then(function () {
+          if (!document.getElementById("messageModal").classList.contains("open")) return;
+          populateRecipients(sel.value);
+          prepareRecipientKey(sel.value);
+        });
+      }
     }
     function closeMessagePanel(keepDraft) {
       if (msgSending) return;
@@ -2224,6 +2376,21 @@
       if (body.length > MSG_MAX_BODY) { show(["The message is too long: " + body.length + " characters (max " + MSG_MAX_BODY + ")."], true); area.focus(); return; }
       if (!session || !hasUserToken()) { show(["Your session is not verified. Log in again (an emailed code is needed)."], true); return; }
 
+      // The recipient's key must be settled before anything leaves this browser.
+      if (keyState.to !== to || keyState.status === "loading") { show(["Wait a moment: the recipient's PGP key is still being checked."], true); return; }
+      if (keyState.status === "error") {                                 // pressing Send again is also a retry
+        show(["Trying the key download again..."], false);
+        await prepareRecipientKey(to);
+        if (keyState.status === "error") {
+          show(["The recipient's PGP key is unavailable: " + keyState.error, "Nothing was sent (it would have gone out unencrypted)."], true);
+          return;
+        }
+      }
+      if (keyState.status === "nokey" && !document.getElementById("messagePlain").checked) {
+        show(["No PGP key is published for " + to + ".", "Tick 'Send it UNENCRYPTED anyway' to send without encryption."], true);
+        return;
+      }
+
       msgSending = true;
       busy = true;
       input.disabled = true;
@@ -2233,26 +2400,14 @@
       const progress = function (t) { log.push(t); show(log, false); };
       let closed = false;
       try {
-        const target = findUser(to);
         let ciphertext = null;
         let usedPgp = false;
-        if (target && (target.pgp || target.pgpUrl || target.pgpFp)) {
-          try {
-            progress("Resolving recipient PGP key...");
-            const armored = await resolveRecipientPublicKey(target, progress);
-            if (armored) {
-              progress("Encrypting the message body...");
-              ciphertext = await encryptMessage(body, armored);
-              usedPgp = true;
-            } else {
-              progress("No usable PGP key for the recipient: plaintext.");
-            }
-          } catch (e) {
-            progress("PGP key/encrypt failed: " + (e.message || e));
-            progress("Sending as plaintext.");
-          }
+        if (keyState.status === "ready") {
+          progress("Encrypting the message body for " + to + "...");
+          ciphertext = await encryptMessage(body, keyState.armored);      // a failure stops the send: there is no plaintext fallback
+          usedPgp = true;
         } else {
-          progress("No known PGP key for the recipient: plaintext.");
+          progress("Sending UNENCRYPTED, as you confirmed.");
         }
 
         const payload = {
@@ -2279,7 +2434,7 @@
           plain: true, body: body.slice(0, MSG_MAX_BODY), status: "sending", error: null
         });
         await saveSession();
-        progress("Sending → " + to + "  (" + size + " B" + (usedPgp ? ", PGP" : "") + ") ...");
+        progress("Sending → " + to + "  (" + size + " B" + (usedPgp ? ", PGP" : ", UNENCRYPTED") + ") ...");
 
         let res = null;
         let netError = null;
@@ -2299,7 +2454,7 @@
           msgDraft = null;
           document.getElementById("messageModal").classList.remove("open");
           closed = true;
-          print("Message sent. ✓  (saved in history)", "info");
+          print("Message sent. ✓  (" + (usedPgp ? "PGP-encrypted for " + to + ", key ..." + String(keyState.fp).slice(-16) : "UNENCRYPTED, as you confirmed") + "; saved in history)", "info");
         } else {
           let problem;
           if (netError) {
@@ -2324,7 +2479,7 @@
           show(problem.filter(Boolean), true);
         }
       } catch (e) {
-        show(["Could not send: " + (e.message || e)], true);
+        show(["Could not send: " + (e.message || e), "Nothing was sent."], true);
       } finally {
         msgSending = false;
         busy = false;
@@ -2336,7 +2491,17 @@
     }
     document.getElementById("messageCancel").onclick = function () { closeMessagePanel(true); };
     document.getElementById("messageSend").onclick = sendFromPanel;
-    document.getElementById("messageTo").addEventListener("change", updateMessageRecipientInfo);
+    document.getElementById("messageTo").addEventListener("change", function () { prepareRecipientKey(document.getElementById("messageTo").value); });
+    document.getElementById("messageRetry").onclick = async function () {
+      const sel = document.getElementById("messageTo");
+      if (remoteState === "failed") {
+        keyState.status = "loading";
+        renderKeyState();
+        await ensureRemoteUsers(true);
+        populateRecipients(sel.value);
+      }
+      prepareRecipientKey(sel.value);
+    };
     document.getElementById("messageSubject").addEventListener("keydown", function (e) {
       if (e.key === "Enter") { e.preventDefault(); document.getElementById("messageBody").focus(); }
     });
@@ -2503,12 +2668,25 @@
       toggleHistory(i);
     });
 
+    /** Reached only when the browser refused window.close(): nothing is left on screen, the session is gone. */
+    function showEndScreen() {
+      session = null;
+      msgSaved = null;
+      msgDraft = null;
+      currentUser = "guest";
+      refreshPrompt();                     // the user name disappears from the prompt and the title bar too
+      clearScreen();
+      document.getElementById("endScreen").classList.add("open");
+      document.getElementById("endRestart").focus();
+    }
+    document.getElementById("endRestart").onclick = function () { location.reload(); };
+
     function runCommand(raw) {
       const line = raw;
       const trimmed = line.trim();
 
       if (interactive) {
-        printPromptLine(input.type === "password" ? "********" : line);
+        printPromptLine(input.classList.contains("secret") || input.type === "password" ? "********" : line);   // a typed secret is never echoed
         handleInteractive(line);
         return;
       }
@@ -2576,7 +2754,7 @@
     document.addEventListener("keydown", function (e) {
       if (e.key !== "Escape") return;
       const open = document.querySelector(".modal-overlay.open");
-      const btn = open && open.querySelector("button.secondary");
+      const btn = open && open.querySelector(".actions button.secondary");   // Cancel / Close, never a helper button inside the dialog
       if (btn) { e.preventDefault(); btn.click(); }
     });
 
@@ -2584,7 +2762,9 @@
     print("zedon.tech terminal", "sys");
     print("Type 'help' for available commands.", "sys");
     print("");
-    await loadRemoteUsers();
+    remoteLoading = loadRemoteUsers();
+    await remoteLoading;
+    remoteLoading = null;
     print("");
     input.focus();
   })();
