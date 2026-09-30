@@ -77,6 +77,11 @@
     .line.warn { color: var(--warn); }
     .line.sys { color: #6a9; }
     .line.info { color: #8cf; }
+    .line.gold { color: var(--warn); }                 /* the golden brown also used for panel titles and warnings */
+    /* help: command name (gold) + description in their own columns, so wrapped text keeps a hanging indent */
+    .line.help-row { display: flex; gap: 1ch; padding-left: 2ch; white-space: normal; }
+    .help-cmd { flex: none; width: 17ch; color: var(--warn); white-space: pre; }
+    .help-desc { flex: 1 1 auto; min-width: 0; word-break: break-word; }
     .line a.term-link {
       color: #6cf; text-decoration: underline; word-break: break-all;
     }
@@ -184,6 +189,11 @@
       .title { font-size: .85em; }
       #terminal { padding: 12px 12px 14px; }
       .modal-overlay { padding: 4px; }
+      /* phones: the command on its own line, the description below it, indented */
+      .line.help-row { flex-direction: column; gap: 0; margin-bottom: .35em; }
+      .help-cmd { width: auto; }
+      .help-desc { padding-left: 2ch; }
+      .help-dash { display: none; }
       .nc.big { height: 100%; }
       .nc textarea { min-height: 6em; }
       .nc button { min-height: 44px; padding: .4em 1.2ch; }
@@ -500,52 +510,40 @@
     const EXPLAIN = {
       login: [
         "How login works",
-        "  1. Your keys and messages live ONLY in this browser, encrypted with your local password.",
-        "     'login <name>' asks for that password and unlocks them. The password is never sent anywhere.",
-        "  2. To SEND messages the server must know it is really you. When your session is not verified",
-        "     (first login on this device, or after the 30-day verification expired) a 6-digit code is",
-        "     emailed to the address you registered with. Type it to verify.",
-        "     Without verification you can still read and decrypt, but not send.",
+        "  1. Your keys and messages live ONLY in this browser, encrypted with your local password. 'login <name>' asks for that password and unlocks them. The password is never sent anywhere.",
+        "  2. To SEND messages the server must know it is really you. When your session is not verified (first login on this device, or after the 30-day verification expired) a 6-digit code is emailed to the address you registered with. Type it to verify. Without verification you can still read and decrypt, but not send.",
         "  3. New device or browser? 'login <name>' restores your account there (see below)."
       ],
       restore: [
         "How restoring an account on a new device works",
         "  1. A 6-digit code is emailed to the address you registered with. It proves the account is yours.",
         "  2. You choose a NEW password for this device. It only protects the keys stored in this browser.",
-        "  3. You import your PRIVATE key file (<name>-private.asc, made by 'export' on the old device)",
-        "     and enter that key's own passphrase (usually your OLD password).",
-        "  The server never has your private key. It only checks that the key you import matches the",
-        "  public key stored for the account.",
+        "  3. You import your PRIVATE key file (<name>-private.asc, made by 'export' on the old device) and enter that key's own passphrase (usually your OLD password).",
+        "  The server never has your private key. It only checks that the key you import matches the public key stored for the account.",
         "  Lost the key file? You can create a NEW key instead, but old messages stay unreadable.",
         "  Your local message history is not restored (it was never on the server)."
       ],
       export: [
         "How export works",
-        "  export        downloads <name>.asc (public key) and <name>-private.asc (PRIVATE key)",
-        "  export all    also downloads every other key of this account (imported / previous)",
-        "  - The private key file is your BACKUP. It stays protected by the key's passphrase (your login",
-        "    password at registration, or the imported key's own passphrase).",
+        "  export: downloads <name>.asc (public key) and <name>-private.asc (PRIVATE key).",
+        "  export all: also downloads every other key of this account (imported / previous).",
+        "  - The private key file is your BACKUP. It stays protected by the key's passphrase (your login password at registration, or the imported key's own passphrase).",
         "  - Keep it offline and safe: anyone with the file AND the passphrase can read your messages.",
-        "  - The server never receives it. If the file is lost and this browser is wiped, the messages",
-        "    cannot be recovered.",
+        "  - The server never receives it. If the file is lost and this browser is wiped, the messages cannot be recovered.",
         "  - To restore on another device: 'login <name>' there, then import this file."
       ],
       import: [
         "How import works",
         "  Imports a PGP private key you already have (a file from 'export', or your own gpg key).",
         "  - The key stays in this browser, encrypted with your login password. It is never uploaded.",
-        "  - The key keeps its OWN passphrase, which may differ from your login password.",
-        "    You enter it in 'decode' each time; it is not stored.",
-        "  - 'Use as my registered key' ticked: only the PUBLIC part is sent to the server, people encrypt",
-        "    to this key from now on, and your previous key stays here for old messages.",
-        "    Unticked: the key is only added here, for decrypting.",
-        "  - The User IDs inside a key (name / email) are part of its public key: when you publish the",
-        "    key they become public too. The panel lists them before you confirm.",
+        "  - The key keeps its OWN passphrase, which may differ from your login password. You enter it in 'decode' each time; it is not stored.",
+        "  - 'Use as my registered key' ticked: only the PUBLIC part is sent to the server, people encrypt to this key from now on, and your previous key stays here for old messages. Unticked: the key is only added here, for decrypting.",
+        "  - The User IDs inside a key (name / email) are part of its public key: when you publish the key they become public too. The panel lists them before you confirm.",
         "  - Publishing needs a verified session."
       ]
     };
     function explain(topic) {
-      EXPLAIN[topic].forEach(function (l) { print(l, "sys"); });
+      EXPLAIN[topic].forEach(function (l) { printPara(l, "sys"); });
     }
 
     /** Email a login code for `name`; `where` describes the address for the user. Returns true when sent. */
@@ -573,6 +571,57 @@
       return ok;
     }
     /** After the local password check: email a login code, then wait for it in the 'login_otp' step. */
+    /** Last step of the registration: the verified email + the new public key create the account. */
+    async function completeRegistration(d) {
+      busy = true;
+      input.disabled = true;
+      let outcome = "abort";              // "done" | "retry" | "abort"
+      try {
+        const tok = await getSessionToken(false);
+        const r = await registryCall("/register/complete", {
+          name: d.name, proof: d.proof, public_key: d.keys.publicKey, fingerprint: d.fp, ip_hash: d.ipHash, token: tok
+        });
+        if (r.ok) {
+          session = {
+            name: d.name, password: d.password,
+            publicKey: d.keys.publicKey, privateKey: d.keys.privateKey, activeLoginPass: true, keys: [],
+            email: d.email, userToken: r.data.user_token, userTokenExp: r.data.exp,
+            messages: [], created: Date.now()
+          };
+          await saveSession();
+          currentUser = d.name;
+          print("Done. Registered and logged in as: " + d.name, "info");
+          print("Public key saved on the server, fingerprint: " + fingerprintShort(d.keys.publicKey), "sys");
+          print("Key and messages are password-protected in this browser.");
+          outcome = "done";
+        } else if (r.status === 410) {
+          print("The email verification expired. Start again: register " + d.name, "err");
+          print("Nothing was saved locally.", "warn");
+        } else if (r.status === 409) {
+          print("Name '" + d.name + "' was just taken. Registration aborted.", "err");
+          print("Nothing was saved locally.", "warn");
+        } else {
+          if (r.status === 401) clearToken();
+          print("Registry error (" + r.status + ")" + (r.data.error ? ": " + r.data.error : "") + ".", "err");
+          outcome = "retry";
+        }
+      } catch (e) {
+        print("Verification failed: " + (e.message || e), "err");
+        outcome = "retry";
+      } finally {
+        busy = false;
+        input.disabled = false;
+        input.focus();
+      }
+      if (outcome === "retry") {
+        interactive = { step: "reg_retry", data: d };
+        input.type = "text";
+        promptLabel.textContent = "retry>";
+        print("Your key is ready and the verified email stays valid for a while. Type 'retry' to try again, or 'cancel' to stop.", "warn");
+      } else {
+        resetInteractive();
+      }
+    }
     async function startLoginOtp() {
       print("Your session is not verified (first login here, or the 30-day verification expired).", "sys");
       if (await requestLoginOtp(session.name, maskEmail(session.email))) {
@@ -624,9 +673,9 @@
     }
     function printRestoreOptions(d) {
       print("Next: your private key. Options:", "sys");
-      print("  import   open the key panel and paste " + d.name + "-private.asc (from 'export' on your old device)", "sys");
-      print("  newkey   the key file is lost: create a NEW key (old messages stay unreadable)", "sys");
-      print("  cancel   stop; nothing is saved on this device", "sys");
+      printHelpRow("import", "open the key panel and paste " + d.name + "-private.asc (from 'export' on your old device)", false, "sys");
+      printHelpRow("newkey", "the key file is lost: create a NEW key (old messages stay unreadable)", false, "sys");
+      printHelpRow("cancel", "stop; nothing is saved on this device", false, "sys");
     }
     async function finishRestore(d, publicKey, privateKey, loginPass) {
       session = {
@@ -937,6 +986,37 @@
       div.textContent = text;
       appendBeforePrompt(div);
     }
+    /** One logical paragraph / bullet: it wraps to any width, continuation lines keep the bullet's indent. */
+    function printPara(text, cls) {
+      const div = document.createElement("div");
+      div.className = "line " + (cls || "out");
+      div.textContent = text;
+      const m = /^(\s*(?:[-*]|\d+\.)?\s*)/.exec(text);
+      const n = m ? m[1].length : 0;
+      if (n > 0) { div.style.paddingLeft = n + "ch"; div.style.textIndent = "-" + n + "ch"; }
+      appendBeforePrompt(div);
+    }
+    /** A command (gold) with its description; on phones the description goes below it. */
+    function printHelpRow(cmd, desc, dash, cls) {
+      const div = document.createElement("div");
+      div.className = "line " + (cls || "out") + " help-row";
+      const c = document.createElement("span");
+      c.className = "help-cmd";
+      c.textContent = cmd;
+      const d = document.createElement("span");
+      d.className = "help-desc";
+      if (dash !== false) {
+        const x = document.createElement("span");
+        x.className = "help-dash";
+        x.textContent = "– ";
+        d.appendChild(x);
+      }
+      d.appendChild(document.createTextNode(desc));
+      div.appendChild(c);
+      div.appendChild(document.createTextNode(" "));
+      div.appendChild(d);
+      appendBeforePrompt(div);
+    }
     function printHtml(html, cls) {
       const div = document.createElement("div");
       div.className = "line " + (cls || "out");
@@ -1190,24 +1270,26 @@
           return;
         }
         print("Available commands:", "sys");
-        print("  help [command]    – this list; 'help login|export|import' explains how they work");
-        print("  whoami            – current identity");
-        print("  users             – users (DNS + local)");
-        print("  about             – short info");
-        print("  clear             – clear screen");
-        print("  history           – your sent messages (panel: Up/Down select, Enter opens, Esc closes)");
-        print("  register <name>   – claim a name: email (twice) + emailed code + password + PGP keygen");
-        print("  login <name>      – login (password, then an emailed code when not verified)");
-        print("  logout            – back to guest");
-        print("  message           – write a message to us (panel; login required)");
-        print("  decode            – decrypt PGP message (panel, pick key + passphrase)");
-        print("  import            – import a PGP private key (own passphrase)");
-        print("  pubkey            – show your public key");
-        print("  export [all]      – download your key files (your backup!); explains how it works");
-        print("  install           – install as an app (asks to confirm)");
-        print("  uninstall         – clean up app data + how to remove it (asks to confirm)");
-        print("  purge             – wipe all local data (GDPR)");
-        print("  exit              – close this tab/window");
+        [
+          ["help [command]", "this list; 'help login|export|import' explains how they work"],
+          ["whoami", "current identity"],
+          ["users", "users (DNS + local)"],
+          ["about", "short info"],
+          ["clear", "clear screen"],
+          ["history", "your sent messages (panel: Up/Down select, Enter opens, Esc closes)"],
+          ["register <name>", "claim a name: email (twice), the emailed code, then a password + PGP keygen"],
+          ["login <name>", "login (password, then an emailed code when not verified)"],
+          ["logout", "back to guest"],
+          ["message", "write a message to us (panel; login required)"],
+          ["decode", "decrypt PGP message (panel, pick key + passphrase)"],
+          ["import", "import a PGP private key (own passphrase)"],
+          ["pubkey", "show your public key"],
+          ["export [all]", "download your key files (your backup!); explains how it works"],
+          ["install", "install as an app (asks to confirm)"],
+          ["uninstall", "clean up app data + how to remove it (asks to confirm)"],
+          ["purge", "wipe all local data (GDPR)"],
+          ["exit", "close this tab/window"]
+        ].forEach(function (r) { printHelpRow(r[0], r[1]); });
       },
       whoami: function () {
         print(currentUser);
@@ -1274,8 +1356,8 @@
         });
       },
       about: function () {
-        print("Welcome to a not yet formed LLC's homepage!");
-        print("Feel free to send a message to us! All sent messages are saved locally.");
+        print("Welcome to a not yet formed LLC's homepage!", "gold");
+        print("Feel free to send a message to us! All sent messages are saved locally.", "gold");
       },
       clear: function () { clearScreen(); },
       history: function () { openHistoryPanel(); },
@@ -1499,10 +1581,51 @@
           resetInteractive();
           return;
         }
-        interactive.step = "reg_pass";
-        print("Choose a password (min 6 chars, protects key + data):");
-        promptLabel.textContent = "password>";
-        input.type = "password";
+        interactive.step = "reg_otp";
+        input.type = "text";
+        print("Enter the 6-digit code ('resend' for a new one, 'cancel' to stop):");
+        promptLabel.textContent = "code>";
+        return;
+      }
+      if (step === "reg_otp") {
+        if (t.toLowerCase() === "resend") {
+          if (await requestRegisterOtp(d)) print("Enter the new code:");
+          return;
+        }
+        if (!/^\d{6}$/.test(t)) { print("The code is 6 digits ('resend' for a new one).", "err"); return; }
+        busy = true;
+        input.disabled = true;
+        let abort = false;
+        try {
+          const tok = await getSessionToken(false);
+          const r = await registryCall("/register/confirm", { name: d.name, email: d.email, otp: t, token: tok });
+          if (r.ok) {
+            d.proof = r.data.proof;
+            print("Email verified. ✓", "info");
+            print("Now choose a password for this device (min 6 chars). It protects your PGP key and messages in this browser:");
+            interactive.step = "reg_pass";
+            promptLabel.textContent = "password>";
+            input.type = "password";
+          } else if (r.status === 400 && r.data.reason === "otp") {
+            print("Wrong code" + (typeof r.data.attempts_left === "number" ? " (" + r.data.attempts_left + " attempt(s) left)" : "") + ". Try again or type 'resend'.", "err");
+          } else if (r.status === 410) {
+            print("The code expired or there were too many wrong attempts. Type 'resend' for a new code.", "err");
+          } else if (r.status === 409) {
+            print("Name '" + d.name + "' was just taken. Registration aborted.", "err");
+            print("Nothing was saved locally.", "warn");
+            abort = true;
+          } else {
+            if (r.status === 401) clearToken();
+            print("Registry error (" + r.status + ")" + (r.data.error ? ": " + r.data.error : "") + ". Try again.", "err");
+          }
+        } catch (e) {
+          print("Verification failed: " + (e.message || e), "err");
+        } finally {
+          busy = false;
+          input.disabled = false;
+          input.focus();
+        }
+        if (abort) resetInteractive();
         return;
       }
       if (step === "reg_pass") {
@@ -1515,8 +1638,9 @@
       }
       if (step === "reg_pass2") {
         if (t !== d.password) {
-          print("Mismatch. Restart with: register " + d.name, "err");
-          resetInteractive();
+          print("The passwords do not match. Choose the password again:", "err");
+          interactive.step = "reg_pass";
+          promptLabel.textContent = "password>";
           return;
         }
         print("Generating PGP keypair (curve25519)...", "sys");
@@ -1532,61 +1656,14 @@
           return;
         }
         busy = false;
-        interactive.step = "reg_otp";
         input.type = "text";
         print("Key fingerprint: " + fingerprintShort(d.keys.publicKey), "sys");
-        print("Enter the 6-digit code from the email ('resend' for a new one):");
-        promptLabel.textContent = "code>";
+        await completeRegistration(d);
         return;
       }
-      if (step === "reg_otp") {
-        if (t.toLowerCase() === "resend") {
-          if (await requestRegisterOtp(d)) print("Enter the new code:");
-          return;
-        }
-        if (!/^\d{6}$/.test(t)) { print("The code is 6 digits ('resend' for a new one).", "err"); return; }
-        busy = true;
-        input.disabled = true;
-        let done = false;
-        try {
-          const tok = await getSessionToken(false);
-          const r = await registryCall("/register/verify", {
-            name: d.name, email: d.email, otp: t,
-            public_key: d.keys.publicKey, fingerprint: d.fp, ip_hash: d.ipHash, token: tok
-          });
-          if (r.ok) {
-            session = {
-              name: d.name, password: d.password,
-              publicKey: d.keys.publicKey, privateKey: d.keys.privateKey, activeLoginPass: true, keys: [],
-              email: d.email, userToken: r.data.user_token, userTokenExp: r.data.exp,
-              messages: [], created: Date.now()
-            };
-            await saveSession();
-            currentUser = d.name;
-            print("Done. Registered and logged in as: " + d.name, "info");
-            print("Public key saved on the server, fingerprint: " + fingerprintShort(d.keys.publicKey), "sys");
-            print("Key and messages are password-protected in this browser.");
-            done = true;
-          } else if (r.status === 400 && r.data.reason === "otp") {
-            print("Wrong code" + (typeof r.data.attempts_left === "number" ? " (" + r.data.attempts_left + " attempt(s) left)" : "") + ". Try again or type 'resend'.", "err");
-          } else if (r.status === 410) {
-            print("The code expired or there were too many wrong attempts. Type 'resend' for a new code.", "err");
-          } else if (r.status === 409) {
-            print("Name '" + d.name + "' was just taken. Registration aborted.", "err");
-            print("Nothing was saved locally.", "warn");
-            done = true;
-          } else {
-            if (r.status === 401) clearToken();
-            print("Registry error (" + r.status + ")" + (r.data.error ? ": " + r.data.error : "") + ". Try again.", "err");
-          }
-        } catch (e) {
-          print("Verification failed: " + (e.message || e), "err");
-        } finally {
-          busy = false;
-          input.disabled = false;
-          input.focus();
-        }
-        if (done) resetInteractive();
+      if (step === "reg_retry") {
+        if (t.toLowerCase() === "retry") { await completeRegistration(d); return; }
+        print("Type 'retry' or 'cancel'.", "err");
         return;
       }
       if (step === "restore_confirm") {
