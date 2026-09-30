@@ -28,6 +28,7 @@
       --font: "SF Mono", "Fira Code", "Cascadia Code", "JetBrains Mono", "Consolas", "Liberation Mono", Menlo, Monaco, monospace;
       --fs-base: clamp(13px, 1.55vw, 16.5px);
       --line-h: 1.45;
+      --nc-fs: var(--fs-base);   /* font size of the dialogs (16px on phones: no zoom-on-focus) */
       --pad: clamp(10px, 2.2vw, 26px);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -91,58 +92,105 @@
       caret-color: var(--cursor); min-width: 0; padding: 0;
     }
     .modal-overlay {
-      display: none; position: absolute; inset: 0; background: rgba(0,0,0,.72);
-      z-index: 50; align-items: center; justify-content: center; padding: 12px;
+      display: none; position: absolute; top: 0; left: 0; right: 0; height: min(100%, var(--vvh, 100%)); background: rgba(0,0,0,.72);
+      z-index: 50; align-items: center; justify-content: center; padding: 8px;
     }
     .modal-overlay.open { display: flex; }
-    .modal {
-      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-      width: min(640px, 100%); height: min(88vh, 720px); max-height: 92%;
+    /* Norton Commander style dialogs, in the terminal's own palette. The frame is made of box-drawing characters (see ncLayout). */
+    .nc {
+      --cols: 76;
+      width: calc(var(--cols) * 1ch); max-width: 100%; max-height: 96%;
       display: flex; flex-direction: column;
-      box-shadow: 0 24px 80px rgba(0,0,0,.8);
+      background: var(--dim); color: var(--fg);
+      font-family: var(--font); font-size: var(--nc-fs); line-height: 1.3;
+      box-shadow: 2ch 1.2em 0 rgba(0, 0, 0, .85);
     }
-    .modal header {
-      padding: 14px 18px; border-bottom: 1px solid var(--border);
-      display: flex; justify-content: space-between; align-items: center;
-      font-size: .95em; color: #9c9; flex-shrink: 0;
+    .nc.big { height: 92%; max-height: 100%; }   /* the big dialogs use most of the window; only the human check stays small */
+    .nc-probe { position: absolute; visibility: hidden; pointer-events: none; width: 1ch; height: 1em; font-family: var(--font); font-size: var(--nc-fs); }
+    .nc-row { flex: none; color: var(--prompt); white-space: pre; overflow: hidden; line-height: normal; }  /* box glyphs tile exactly at the font's natural line height */
+    .nc-row .nc-ttl { color: var(--warn); }
+    .nc-mid { flex: 1 1 auto; min-height: 0; display: flex; }
+    .nc-side { flex: none; width: 1ch; position: relative; overflow: hidden; color: var(--prompt); white-space: pre; line-height: normal; }
+    .nc-side span { position: absolute; top: 0; left: 0; }  /* out of the flow: the column stretches to the body, it never sizes it */
+    .nc-body {
+      flex: 1 1 auto; min-width: 0; padding: .4em 1ch; overflow-y: auto;
+      display: flex; flex-direction: column; scrollbar-width: thin; scrollbar-color: var(--accent) var(--dim);
     }
-    .modal .body { padding: 16px 18px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; }
-    .modal label { display: block; font-size: .8em; color: #7a9; margin-bottom: 4px; }
-    .modal textarea, .modal input[type="password"], .modal input[type="text"] {
-      width: 100%; background: #0a0a0a; border: 1px solid var(--dim); color: var(--fg);
-      font-family: inherit; font-size: .9em; padding: 8px 10px; border-radius: 6px;
-      resize: vertical; margin-bottom: 12px;
+    .nc label { display: block; color: var(--prompt); margin: .3em 0 .15em; }
+    .nc .nc-info { color: var(--fg); margin-bottom: .5em; }
+    .nc .nc-info.nc-warn { color: var(--warn); }
+    .nc textarea, .nc input[type="text"], .nc input[type="password"], .nc select {
+      display: block; width: 100%; background: var(--bg); color: var(--prompt); border: 0; border-radius: 0; outline: 0;
+      font: inherit; padding: .1em 1ch; margin: 0 0 .5em; caret-color: var(--cursor);
     }
-    .modal textarea { min-height: 220px; flex: 1; }
-    .modal .actions { display: flex; gap: 8px; justify-content: flex-end; padding-top: 4px; flex-shrink: 0; }
-    .modal .actions button {
-      background: #132; border: 1px solid var(--accent); color: var(--fg);
-      font-family: inherit; font-size: .85em; padding: 7px 14px; border-radius: 5px; cursor: pointer;
+    .nc textarea { min-height: 11em; flex: 1 1 auto; resize: none; }
+    .nc textarea:focus, .nc input:focus, .nc select:focus { box-shadow: inset 0 0 0 1px var(--accent); }
+    .nc .check { display: flex; align-items: baseline; gap: 1ch; color: var(--fg); margin: .3em 0 .5em; cursor: pointer; }
+    .nc .check input {
+      -webkit-appearance: none; appearance: none; margin: 0; padding: 0; width: auto; background: none; border: 0;
+      color: var(--warn); font: inherit; cursor: pointer; outline: 0; box-shadow: none;
     }
-    .modal .actions button.secondary { background: transparent; border-color: var(--dim); }
-    .modal .result {
-      margin-top: 10px; padding: 10px; background: #0c140e; border: 1px solid var(--dim);
-      border-radius: 6px; white-space: pre-wrap; word-break: break-word; font-size: .88em;
-      max-height: 240px; overflow-y: auto; display: none; flex-shrink: 0;
+    .nc .check input::before { content: "[ ]"; }
+    .nc .check input:checked::before { content: "[x]"; }
+    .nc .actions { display: flex; justify-content: center; gap: 3ch; padding: .5em 0 .4em; flex: none; }
+    .nc button {
+      -webkit-appearance: none; appearance: none; border: 0; border-radius: 0; background: var(--accent); color: var(--bg);
+      font: inherit; padding: 0 .5ch; cursor: pointer; box-shadow: .8ch .3em 0 rgba(0, 0, 0, .85);
     }
-    .modal .result.show { display: block; }
-    .modal.compact { height: auto; max-height: 92%; }
-    .modal select {
-      width: 100%; background: #0a0a0a; border: 1px solid var(--dim); color: var(--fg);
-      font-family: inherit; font-size: .9em; padding: 8px 10px; border-radius: 6px; margin-bottom: 12px;
+    .nc button.secondary { background: var(--bg); color: var(--fg); }
+    .nc button::before { content: "[ "; }
+    .nc button::after { content: " ]"; }
+    .nc button:focus-visible { background: var(--warn); color: var(--bg); outline: 0; }
+    @media (hover: hover) { .nc button:hover { background: var(--warn); color: var(--bg); } }
+    .nc .result {
+      display: none; margin-top: .4em; padding: .2em 1ch; background: var(--bg); color: var(--fg);
+      white-space: pre-wrap; word-break: break-word; max-height: 12em; overflow-y: auto; flex: none;
     }
-    .modal .check { display: flex; gap: 8px; align-items: center; font-size: .85em; color: #9c9; margin-bottom: 12px; }
-    .modal .check input { width: auto; margin: 0; }
-    #humanWidget { min-height: 70px; display: flex; justify-content: center; align-items: center; margin-bottom: 12px; }
+    .nc .result.show { display: block; }
+    .nc .nc-note { margin: 0 0 .4em; }
+    .nc .nc-note div { color: var(--fg); word-break: break-word; }
+    .nc .nc-note .nc-alert { background: var(--error); color: var(--bg); padding: 0 1ch; margin-top: .3em; }
+    .nc .result.bad { background: var(--error); color: var(--bg); }
+    .nc .nc-info.nc-warn, .nc .nc-note .nc-warnline { color: var(--warn); }
+    .nc .actions { position: sticky; bottom: 0; background: var(--dim); z-index: 1; }   /* the buttons stay visible while the body scrolls */
+    .nc .actions button:disabled { opacity: .45; cursor: default; }
+    .nc .nc-hint { color: var(--prompt); text-align: center; margin: 0 0 .3em; flex: none; white-space: pre-wrap; }
+    .nc .nc-hint .hint-touch { display: none; }
+    @media (hover: none) and (pointer: coarse) { .nc .nc-hint .hint-kb { display: none; } .nc .nc-hint .hint-touch { display: inline; } }
+    /* message history: a keyboard-navigable list, the selected item in inverse video, Enter opens it */
+    .nc .nc-list {
+      flex: 1 1 auto; min-height: 8em; overflow-y: auto; outline: 0; background: var(--bg); margin-bottom: .4em;
+      scrollbar-width: thin; scrollbar-color: var(--accent) var(--bg);
+    }
+    .nc .nc-list:focus { box-shadow: inset 0 0 0 1px var(--accent); }
+    .nc .nc-empty { padding: .4em 1ch; color: var(--fg); }
+    .nc .nc-item { cursor: pointer; }
+    .nc .nc-head { padding: .3em 1ch; }
+    .nc .nc-l1, .nc .nc-l2 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .nc .nc-l1 { color: var(--prompt); }
+    .nc .nc-l2 { color: var(--fg); }
+    .nc .nc-l2 .nc-snip { opacity: .65; }
+    .nc .nc-item.nc-sel .nc-head { background: var(--fg); }
+    .nc .nc-item.nc-sel .nc-head, .nc .nc-item.nc-sel .nc-head * { color: var(--bg); opacity: 1; }   /* inverse video */
+    .nc .nc-full { background: var(--dim); padding: .3em 1ch .5em 3ch; cursor: auto; user-select: text; -webkit-user-select: text; }
+    .nc .nc-meta { color: var(--prompt); white-space: pre-wrap; word-break: break-word; }
+    .nc .nc-msg { color: var(--fg); white-space: pre-wrap; word-break: break-word; margin-top: .5em; }
+    #humanWidget { min-height: 70px; display: flex; justify-content: center; align-items: center; background: var(--bg); padding: .4em; margin-bottom: .5em; }
     @media (max-width: 600px) {
-      :root { --fs-base: 13.5px; --pad: 7px; }
+      :root { --fs-base: 13.5px; --pad: 7px; --nc-fs: 16px; }
       .term-window { border-radius: 8px; }
       .titlebar { padding: 8px 12px; gap: 8px; }
       .title-icon { width: 40px; height: 40px; }
       .title { font-size: .85em; }
       #terminal { padding: 12px 12px 14px; }
-      .modal { height: min(92vh, 100%); width: 100%; }
-      .modal textarea { min-height: 160px; }
+      .modal-overlay { padding: 4px; }
+      .nc.big { height: 100%; }
+      .nc textarea { min-height: 6em; }
+      .nc button { min-height: 44px; padding: .4em 1.2ch; }
+      .nc .actions { gap: 2ch; }
+      .nc select, .nc input[type="text"], .nc input[type="password"] { min-height: 44px; }
+      .nc .nc-head { min-height: 44px; }
+      .nc .check { min-height: 44px; align-items: center; }
     }
     @media (min-width: 1200px) { :root { --fs-base: 16px; } }
   </style>
@@ -165,63 +213,78 @@
     </div>
 
     <div class="modal-overlay" id="decodeModal">
-      <div class="modal">
-        <header>
-          <span>decode — PGP decrypt</span>
-        </header>
-        <div class="body">
-          <div id="decodeKeyInfo" style="font-size:.82em;color:#7a9;margin-bottom:12px;padding:8px 10px;background:#0c140e;border:1px solid var(--dim);border-radius:6px;"></div>
-          <div id="decodeKeyWrap">
-            <label>Key to decrypt with</label>
-            <select id="decodeKey"></select>
-          </div>
-          <label>Armored ciphertext (-----BEGIN PGP MESSAGE----- ...)</label>
-          <textarea id="decodeCipher" placeholder="Paste encrypted message here..."></textarea>
-          <div id="decodePassWrap">
-            <label id="decodePassLabel">Passphrase (optional — leave empty to use login password)</label>
-            <input type="password" id="decodePass" placeholder="Leave empty to use session password" />
-          </div>
-          <div class="actions">
-            <button type="button" class="secondary" id="decodeCancel">Cancel</button>
-            <button type="button" id="decodeRun">Decrypt</button>
-          </div>
-          <div class="result" id="decodeResult"></div>
+      <div class="nc big" data-title="Decode PGP message" data-cols="104">
+        <div id="decodeKeyInfo" class="nc-info"></div>
+        <div id="decodeKeyWrap">
+          <label for="decodeKey">Key to decrypt with</label>
+          <select id="decodeKey"></select>
+        </div>
+        <label for="decodeCipher">Armored ciphertext (-----BEGIN PGP MESSAGE----- ...)</label>
+        <textarea id="decodeCipher" placeholder="Paste encrypted message here..."></textarea>
+        <div id="decodePassWrap">
+          <label id="decodePassLabel" for="decodePass">Passphrase (optional: leave empty to use login password)</label>
+          <input type="password" id="decodePass" placeholder="Leave empty to use session password" />
+        </div>
+        <div class="result" id="decodeResult"></div>
+        <div class="actions">
+          <button type="button" class="secondary" id="decodeCancel">Cancel</button>
+          <button type="button" id="decodeRun">Decrypt</button>
         </div>
       </div>
     </div>
 
     <div class="modal-overlay" id="importModal">
-      <div class="modal">
-        <header>
-          <span>import — PGP private key</span>
-        </header>
-        <div class="body">
-          <div id="importInfo" style="font-size:.82em;color:#7a9;margin-bottom:12px;padding:8px 10px;background:#0c140e;border:1px solid var(--dim);border-radius:6px;"></div>
-          <label>Armored private key (-----BEGIN PGP PRIVATE KEY BLOCK----- ...)</label>
-          <textarea id="importKey" placeholder="Paste your private key here..."></textarea>
-          <label>Passphrase of THIS key (may differ from your login password; empty if the key is not protected)</label>
-          <input type="password" id="importPass" placeholder="Key passphrase" />
-          <label class="check" id="importPublishRow"><input type="checkbox" id="importPublish" checked /> Use as my registered key (publish its public part)</label>
-          <div class="actions">
-            <button type="button" class="secondary" id="importCancel">Cancel</button>
-            <button type="button" id="importRun">Import</button>
-          </div>
-          <div class="result" id="importResult"></div>
+      <div class="nc big" data-title="Import PGP private key" data-cols="104">
+        <div id="importInfo" class="nc-info"></div>
+        <label for="importKey">Armored private key (-----BEGIN PGP PRIVATE KEY BLOCK----- ...)</label>
+        <textarea id="importKey" placeholder="Paste your private key here..."></textarea>
+        <div id="importPreview" class="nc-note"></div>
+        <label for="importPass">Passphrase of THIS key (may differ from your login password; empty if the key is not protected)</label>
+        <input type="password" id="importPass" placeholder="Key passphrase" />
+        <label class="check" id="importPublishRow"><input type="checkbox" id="importPublish" checked /> Use as my registered key (publish its public part)</label>
+        <div class="result" id="importResult"></div>
+        <div class="actions">
+          <button type="button" class="secondary" id="importCancel">Cancel</button>
+          <button type="button" id="importRun">Import</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="messageModal">
+      <div class="nc big" data-title="Send message" data-cols="104">
+        <div id="messageInfo" class="nc-info"></div>
+        <label for="messageTo">To</label>
+        <select id="messageTo"></select>
+        <div id="messagePgp" class="nc-note"></div>
+        <label for="messageSubject">Subject (sent in clear text, it becomes the email subject)</label>
+        <input type="text" id="messageSubject" maxlength="120" autocomplete="off" enterkeyhint="next" />
+        <label for="messageBody">Message</label>
+        <textarea id="messageBody" placeholder="Write your message..."></textarea>
+        <div class="result" id="messageResult"></div>
+        <div class="actions">
+          <button type="button" class="secondary" id="messageCancel">Cancel</button>
+          <button type="button" id="messageSend">Send</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="historyModal">
+      <div class="nc big" data-title="Message history" data-cols="104">
+        <div id="historyInfo" class="nc-info"></div>
+        <div id="historyList" class="nc-list" tabindex="0" role="listbox" aria-label="Message history"></div>
+        <div id="historyHint" class="nc-hint"><span class="hint-kb">Up/Down: select   Enter: open/close   Esc: close   (or tap)</span><span class="hint-touch">Tap a message to open or close it</span></div>
+        <div class="actions">
+          <button type="button" class="secondary" id="historyClose">Close</button>
         </div>
       </div>
     </div>
 
     <div class="modal-overlay" id="humanModal">
-      <div class="modal compact">
-        <header>
-          <span>verify — human check</span>
-        </header>
-        <div class="body">
-          <div id="humanStatus" style="font-size:.85em;color:#7a9;margin-bottom:12px;"></div>
-          <div id="humanWidget"></div>
-          <div class="actions">
-            <button type="button" class="secondary" id="humanCancel">Cancel</button>
-          </div>
+      <div class="nc" data-title="Human check" data-cols="56">
+        <div id="humanStatus" class="nc-info"></div>
+        <div id="humanWidget"></div>
+        <div class="actions">
+          <button type="button" class="secondary" id="humanCancel">Cancel</button>
         </div>
       </div>
     </div>
@@ -476,6 +539,8 @@
         "  - 'Use as my registered key' ticked: only the PUBLIC part is sent to the server, people encrypt",
         "    to this key from now on, and your previous key stays here for old messages.",
         "    Unticked: the key is only added here, for decrypting.",
+        "  - The User IDs inside a key (name / email) are part of its public key: when you publish the",
+        "    key they become public too. The panel lists them before you confirm.",
         "  - Publishing needs a verified session."
       ]
     };
@@ -577,6 +642,68 @@
       print("Public key fingerprint: " + fingerprintShort(publicKey), "sys");
       print("Other or older keys: bring them back with 'import' (untick 'Use as my registered key').", "sys");
     }
+
+    // ───── Norton Commander style dialogs: frames built from box-drawing characters ─────
+    function ncBuild(el) {
+      const body = document.createElement("div");
+      body.className = "nc-body";
+      while (el.firstChild) body.appendChild(el.firstChild);
+      function rowEl(cls) { const r = document.createElement("div"); r.className = "nc-row " + cls; return r; }
+      function sideEl() { const s = document.createElement("div"); s.className = "nc-side"; const i = document.createElement("span"); i.textContent = "║\n".repeat(200); s.appendChild(i); return s; }
+      const top = rowEl("nc-top");
+      const tl = document.createTextNode(""), tt = document.createElement("span"), tr = document.createTextNode("");
+      tt.className = "nc-ttl";
+      top.appendChild(tl); top.appendChild(tt); top.appendChild(tr);
+      const mid = document.createElement("div");
+      mid.className = "nc-mid";
+      mid.appendChild(sideEl()); mid.appendChild(body); mid.appendChild(sideEl());
+      const bottom = rowEl("nc-bottom");
+      el.appendChild(top); el.appendChild(mid); el.appendChild(bottom);
+      el._nc = { tl: tl, tt: tt, tr: tr, bottom: bottom };
+    }
+    function ncLayout() {
+      const win = document.querySelector(".term-window") || document.body;
+      let probe = document.getElementById("ncProbe");
+      if (!probe) {
+        probe = document.createElement("span");
+        probe.id = "ncProbe";
+        probe.className = "nc-probe";                        // same font as the dialogs, so 1ch is one dialog character
+        win.appendChild(probe);
+      }
+      const ch = probe.getBoundingClientRect().width;       // width of one character cell
+      const ov = document.querySelector(".modal-overlay");
+      const pad = ov ? (parseFloat(getComputedStyle(ov).paddingLeft) || 8) : 8;
+      const avail = win.clientWidth - 2 * pad;
+      document.querySelectorAll(".nc").forEach(function (el) {
+        if (!el._nc) return;
+        const cap = parseInt(el.getAttribute("data-cols"), 10) || 76;
+        const fit = ch > 0 && avail > 0 ? Math.floor(avail / ch) : cap;
+        const cols = Math.max(24, Math.min(cap, fit));
+        el.style.setProperty("--cols", String(cols));
+        const title = el.getAttribute("data-title") || "";
+        let t = title ? " " + title + " " : "";
+        const room = cols - 2;
+        if (t.length > room) t = " " + title.slice(0, Math.max(0, room - 4)) + "… ";
+        const n = Math.max(0, room - t.length);
+        const left = Math.floor(n / 2);
+        el._nc.tl.nodeValue = "╔" + "═".repeat(left);
+        el._nc.tt.textContent = t;
+        el._nc.tr.nodeValue = "═".repeat(n - left) + "╗";
+        el._nc.bottom.textContent = "╚" + "═".repeat(room) + "╝";
+      });
+    }
+    // On phones the on-screen keyboard shrinks the visible area: keep the dialogs (and their buttons) inside it.
+    function syncViewport() {
+      const vv = window.visualViewport;
+      document.documentElement.style.setProperty("--vvh", (vv ? vv.height : window.innerHeight) + "px");
+    }
+    document.querySelectorAll(".nc").forEach(ncBuild);
+    ncLayout();
+    window.addEventListener("resize", ncLayout);
+    syncViewport();
+    window.addEventListener("resize", syncViewport);
+    if (window.visualViewport) { window.visualViewport.addEventListener("resize", syncViewport); window.visualViewport.addEventListener("scroll", syncViewport); }
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(ncLayout);
 
     const DOHStatus = { NoError: 0 };
     async function queryDNSRecords(hostname, recordType) {
@@ -694,7 +821,8 @@
       return norm ? norm.slice(-16) : "(?)";
     }
     /** Resolve remote user PGP: fetch URL if needed, verify against DNS fingerprint */
-    async function resolveRecipientPublicKey(target) {
+    async function resolveRecipientPublicKey(target, log) {
+      log = log || print;
       if (!target) return null;
       // LOCAL session key already armored
       if (target.source === "LOCAL" && target.pgp && /BEGIN PGP/.test(target.pgp)) {
@@ -705,7 +833,7 @@
       const expectedFp = target.pgpFp || null;
 
       if (ref && /^https?:\/\//i.test(ref)) {
-        print("Fetching PGP key: " + ref, "sys");
+        log("Fetching PGP key: " + ref, "sys");
         const res = await fetch(ref, { credentials: "omit" });
         if (!res.ok) throw new Error("Key fetch failed HTTP " + res.status);
         armored = (await res.text()).trim();
@@ -730,9 +858,9 @@
             " key=" + actualFp.slice(-16)
           );
         }
-        print("PGP fingerprint OK: " + actualFp.slice(-16), "info");
+        log("PGP fingerprint OK: " + actualFp.slice(-16), "info");
       } else {
-        print("PGP fingerprint (no DNS fp to check): " + actualFp.slice(-16), "warn");
+        log("PGP fingerprint (no DNS fp to check): " + actualFp.slice(-16), "warn");
       }
       return armored;
     }
@@ -917,93 +1045,6 @@
       return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i.test(email);
     }
 
-    async function doSendMessage(to, body) {
-      if (!session) { print("Guests cannot send messages. Use: register <name> or login <name>", "err"); return; }
-      if (!session.email) {
-        print("This local account is not registered on the server. Use nuke, then register.", "err");
-        return;
-      }
-      if (!hasUserToken()) {
-        print("Your session is not verified. Log in again (an emailed code is needed).", "err");
-        return;
-      }
-      if (!body.trim()) { print("Message cannot be empty.", "err"); return; }
-
-      const target = findUser(to);
-      let ciphertext = null;
-      let usedPgp = false;
-
-      if (target && (target.pgp || target.pgpUrl || target.pgpFp)) {
-        try {
-          print("Resolving recipient PGP key...", "sys");
-          const armored = await resolveRecipientPublicKey(target);
-          if (armored) {
-            print("Encrypting with recipient PGP key...", "sys");
-            ciphertext = await encryptMessage(body, armored);
-            usedPgp = true;
-          } else {
-            print("No usable PGP key for recipient — plaintext.", "sys");
-          }
-        } catch (e) {
-          print("PGP key/encrypt failed: " + (e.message || e), "err");
-          print("Sending as plaintext.", "warn");
-        }
-      } else {
-        print("No known PGP key for recipient — plaintext.", "sys");
-      }
-
-      const payload = {
-        to: to,
-        message: ciphertext || body,
-        encrypted: usedPgp,
-        sender_pubkey: session.publicKey,
-        source: "zedon.tech-terminal",
-        timestamp: new Date().toISOString(),
-        user_token: session.userToken
-      };
-
-      const size = new TextEncoder().encode(payload.message).length;
-      const entry = { ts: Date.now(), to: to, from: session.email, size: size, encrypted: usedPgp, body: payload.message.slice(0, 2000) };
-      session.messages = session.messages || [];
-      session.messages.push(entry);
-      await saveSession();
-
-      print("Sending → " + to + "  (" + size + " B" + (usedPgp ? ", PGP" : "") + ") ...", "sys");
-      busy = true;
-      input.disabled = true;
-      try {
-        const res = await fetch(WORKER_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        if (res.ok) {
-          print("Message sent. ✓  (also saved locally)", "info");
-        } else {
-          const txt = await res.text().catch(function () { return ""; });
-          let data = {};
-          try { data = JSON.parse(txt); } catch (e) {}
-          if (res.status === 401 && data.reason === "user_token") {
-            session.userToken = null;
-            session.userTokenExp = 0;
-            await saveSession();
-            print("Your session expired. Log in again to verify it. Message kept locally, not sent.", "warn");
-          } else {
-            print("Worker error (" + res.status + "). Message kept locally.", "warn");
-            const shown = data.error || txt;
-            if (shown) print(String(shown).slice(0, 180), "err");
-          }
-        }
-      } catch (e) {
-        print("Network error — message saved locally.", "warn");
-        print(String(e.message || e), "err");
-      } finally {
-        busy = false;
-        input.disabled = false;
-        input.focus();
-      }
-    }
-
     // ───────────── PWA install tracking ─────────────
     // State lives in localStorage (INSTALL_KEY) as { installed, ts, via }.
     // It is a best-effort flag, kept honest by three signals:
@@ -1135,7 +1176,7 @@
       if (isStandalone()) {
         print("You are inside the app right now; the flag is set again on next start until you remove it.", "warn");
       }
-      print("Your local users and keys were not touched (use 'nuke' for that).", "sys");
+      print("Your local users and keys were not touched (use 'purge' for that).", "sys");
     }
     // ───────────── /PWA install tracking ─────────────
 
@@ -1154,22 +1195,19 @@
         print("  users             – users (DNS + local)");
         print("  about             – short info");
         print("  clear             – clear screen");
-        print("  history           – sent messages (time, to, size)");
+        print("  history           – your sent messages (panel: Up/Down select, Enter opens, Esc closes)");
         print("  register <name>   – claim a name: email (twice) + emailed code + password + PGP keygen");
         print("  login <name>      – login (password, then an emailed code when not verified)");
         print("  logout            – back to guest");
-        print("  message           – send message (login required; interactive or args)");
-        print("  message <to> <text...>");
+        print("  message           – write a message to us (panel; login required)");
         print("  decode            – decrypt PGP message (panel, pick key + passphrase)");
         print("  import            – import a PGP private key (own passphrase)");
         print("  pubkey            – show your public key");
         print("  export [all]      – download your key files (your backup!); explains how it works");
         print("  install           – install as an app (asks to confirm)");
         print("  uninstall         – clean up app data + how to remove it (asks to confirm)");
-        print("  nuke              – wipe all local data (GDPR)");
+        print("  purge             – wipe all local data (GDPR)");
         print("  exit              – close this tab/window");
-        print("");
-        print("Messages are saved locally. DNS TXT format: usr= role= PGP=");
       },
       whoami: function () {
         print(currentUser);
@@ -1240,19 +1278,7 @@
         print("Feel free to send a message to us! All sent messages are saved locally.");
       },
       clear: function () { clearScreen(); },
-      history: function () {
-        let all = [];
-        if (session) all = session.messages || [];
-        else {
-          try { all = loadStore().guestMessages || []; } catch (e) { all = []; }
-        }
-        if (!all.length) { print("(no saved messages)"); return; }
-        all.slice().reverse().forEach(function (m) {
-          const ts = new Date(m.ts).toISOString().replace("T", " ").slice(0, 19);
-          const size = m.size != null ? m.size : 0;
-          print(ts + "  → " + m.to + "  " + size + " B");
-        });
-      },
+      history: function () { openHistoryPanel(); },
       register: async function (args) {
         if (session) { print("Already logged in. Use: logout", "err"); return; }
         const name = (args[0] || "").trim();
@@ -1301,8 +1327,6 @@
           input.focus();
         }
         if (!available) return;
-        print("Registry will store: name, email, public key + fingerprint, keccak256(your IP) = " + ipHash.slice(0, 16) + "…", "sys");
-        print("Your IP address is logged by the server.", "sys");
         interactive = { step: "reg_email1", data: { name: name, ipHash: ipHash } };
         print("Register: " + name, "sys");
         print("Email address (a one-time code will be sent to it):");
@@ -1341,6 +1365,7 @@
       logout: function () {
         if (!session) { print("Already guest.", "sys"); return; }
         print("Logout: " + session.name + " → guest", "sys");
+        msgSaved = null;
         session = null;
         currentUser = "guest";
         refreshPrompt();
@@ -1400,8 +1425,8 @@
         print("Uninstall? Are you sure? (type 'YES')", "warn");
         promptLabel.textContent = "confirm>";
       },
-      nuke: function () {
-        interactive = { step: "nuke_confirm", data: {} };
+      purge: function () {
+        interactive = { step: "purge_confirm", data: {} };
         print("Holy GDPR! Are you sure? (type 'YES')", "warn");
         promptLabel.textContent = "confirm>";
       },
@@ -1440,24 +1465,7 @@
         explain("import");
         openImportPanel();
       },
-      message: async function (args) {
-        if (!session) {
-          print("Guests cannot send messages. Use: register <name> or login <name>", "err");
-          return;
-        }
-        if (args.length === 0) {
-          interactive = { step: "msg_to", data: {} };
-          print("Send message (cancel to abort)", "sys");
-          print("Recipient:");
-          promptLabel.textContent = "to>";
-          return;
-        }
-        if (args.length < 2) {
-          print("Usage: message <to> <text...>", "err");
-          return;
-        }
-        await doSendMessage(args[0], args.slice(1).join(" "));
-      }
+      message: function (args) { openMessagePanel({ args: args || [] }); }
     };
 
     async function handleInteractive(line) {
@@ -1710,7 +1718,7 @@
           print("Welcome, " + session.name, "info");
           if (!session.email) {
             print("This local account is not registered on the server (created before email verification).", "warn");
-            print("Sending messages is disabled. Use nuke, then register.", "warn");
+            print("Sending messages is disabled. Use purge, then register.", "warn");
           } else {
             needOtp = !hasUserToken();
           }
@@ -1754,20 +1762,6 @@
         if (done) resetInteractive();
         return;
       }
-      if (step === "msg_to") {
-        if (!t) { print("Enter a recipient.", "err"); return; }
-        d.to = t;
-        interactive.step = "msg_body";
-        print("Message (Enter to send):");
-        promptLabel.textContent = "msg>";
-        return;
-      }
-      if (step === "msg_body") {
-        interactive = null;
-        refreshPrompt();
-        await doSendMessage(d.to, t);
-        return;
-      }
       if (step === "install_confirm") {
         interactive = null;
         refreshPrompt();
@@ -1790,7 +1784,7 @@
         }
         return;
       }
-      if (step === "nuke_confirm") {
+      if (step === "purge_confirm") {
         interactive = null;
         refreshPrompt();
         if (t === "YES") {
@@ -1803,7 +1797,7 @@
           refreshPrompt();
           print("All local data wiped. You are guest again.", "info");
         } else {
-          print("Nuke aborted. (You must type YES in capitals.)", "warn");
+          print("Purge aborted. (You must type YES in capitals.)", "warn");
         }
       }
     }
@@ -1863,7 +1857,7 @@
       const keys = decodeKeyList();
       if (session && keys.length) {
         info.textContent = "Logged in as " + session.name + "  ·  " + keys.length + " key(s) available";
-        info.style.color = "#8cf";
+        info.classList.remove("nc-warn");
         sel.innerHTML = "";
         keys.forEach(function (k, i) {
           const o = document.createElement("option");
@@ -1877,7 +1871,7 @@
         updateDecodePassUi();
       } else {
         info.textContent = "No key loaded. Run: login <name>  or  register <name>";
-        info.style.color = "#ffaa00";
+        info.classList.add("nc-warn");
         keyWrap.style.display = "none";
         passWrap.style.display = "none";
       }
@@ -1923,7 +1917,53 @@
           " (the file " + restore.name + "-private.asc). Enter that key's own passphrase (usually your OLD password). Nothing is uploaded."
         : "Active key: " + fingerprintShort(session.publicKey) + "  ·  the imported key keeps its OWN passphrase; you enter it in decode. It is never uploaded.";
       document.getElementById("importModal").classList.add("open");
+      updateImportPreview();
     }
+    // Shows which User IDs (name / email) the pasted key contains, and that publishing makes them public.
+    let previewSeq = 0;
+    let previewTimer = null;
+    async function updateImportPreview() {
+      const seq = ++previewSeq;
+      const box = document.getElementById("importPreview");
+      const armored = document.getElementById("importKey").value.trim();
+      const publish = document.getElementById("importPublish").checked && !restoreCtx;
+      function show(lines) {
+        if (seq !== previewSeq) return;
+        box.textContent = "";
+        lines.forEach(function (l) {
+          const d = document.createElement("div");
+          d.textContent = l.t;          // textContent: User IDs are untrusted text
+          if (l.alert) d.className = "nc-alert";
+          box.appendChild(d);
+        });
+      }
+      if (!armored) { show([]); return; }
+      let key;
+      try {
+        key = await openpgp.readPrivateKey({ armoredKey: armored });
+      } catch (e) {
+        show([{ t: "This does not look like a valid PGP private key." }]);
+        return;
+      }
+      const uids = key.getUserIDs();
+      const lines = [{ t: "Key " + key.getFingerprint().toUpperCase().slice(-16) + ". User IDs inside this key:" }];
+      if (uids.length) uids.slice(0, 8).forEach(function (u) { lines.push({ t: "  * " + u }); });
+      else lines.push({ t: "  (none)" });
+      if (uids.length > 8) lines.push({ t: "  ... and " + (uids.length - 8) + " more" });
+      if (publish) {
+        lines.push({ t: "!! These User IDs become PUBLIC: the public key, with them, is stored on the server.", alert: true });
+      } else if (!restoreCtx) {
+        lines.push({ t: "Not published: the key stays in this browser only." });
+      }
+      show(lines);
+    }
+    function schedulePreview() {
+      clearTimeout(previewTimer);
+      previewTimer = setTimeout(updateImportPreview, 150);
+    }
+    document.getElementById("importKey").addEventListener("input", schedulePreview);
+    document.getElementById("importPublish").addEventListener("change", updateImportPreview);
+
     function closeImportPanel() {
       document.getElementById("importModal").classList.remove("open");
       input.focus();
@@ -2009,6 +2049,383 @@
       }
     };
 
+    // ───── Message panel: recipient, subject, body ─────
+    const MSG_MAX_BODY = 10000;      // characters that are sent and kept in the history
+    const MSG_MAX_SUBJECT = 120;
+    const HISTORY_MAX = 200;         // newest messages kept locally
+    let msgDraft = null;             // the history entry of the panel session (kept across retries)
+    let msgSending = false;
+    let msgSaved = null;             // unsent text, restored when the panel is opened again
+
+    function messageRecipients() {
+      const out = [];
+      remoteUsers.forEach(function (u) {
+        if (!out.some(function (r) { return r.name.toLowerCase() === u.name.toLowerCase(); })) out.push({ name: u.name, role: u.role });
+      });
+      return out.length ? out : [{ name: "info", role: "" }, { name: "zoltan.vass", role: "" }];
+    }
+    function updateMessageRecipientInfo() {
+      const to = document.getElementById("messageTo").value;
+      const box = document.getElementById("messagePgp");
+      const d = document.createElement("div");
+      const target = findUser(to);
+      if (target && (target.pgp || target.pgpUrl || target.pgpFp)) {
+        let tail = "";
+        if (target.pgpFp) tail = " (key ..." + normalizeFp(target.pgpFp).slice(-16) + ")";
+        else if (target.pgp && /BEGIN PGP/.test(target.pgp)) tail = " (key ..." + fingerprintShort(target.pgp) + ")";
+        d.textContent = "PGP: the message body will be encrypted for " + to + tail + ".";
+      } else {
+        d.className = "nc-warnline";
+        d.textContent = "!! No PGP key known for " + to + ": the message body is sent as PLAINTEXT.";
+      }
+      box.textContent = "";
+      box.appendChild(d);
+    }
+    function openMessagePanel(pre) {
+      if (!session) { print("Guests cannot send messages. Use: register <name> or login <name>", "err"); return; }
+      if (!session.email) { print("This local account is not registered on the server. Use purge, then register.", "err"); return; }
+      if (!hasUserToken()) { print("Your session is not verified. Log in again (an emailed code is needed).", "err"); return; }
+      const sel = document.getElementById("messageTo");
+      const subj = document.getElementById("messageSubject");
+      const area = document.getElementById("messageBody");
+      const res = document.getElementById("messageResult");
+      sel.textContent = "";
+      const rec = messageRecipients();
+      rec.forEach(function (r) {
+        const o = document.createElement("option");
+        o.value = r.name;
+        o.textContent = r.role ? r.name + "  (" + r.role + ")" : r.name;
+        sel.appendChild(o);
+      });
+      msgDraft = null;
+      let to = null, subject = "", body = "", restored = false;
+      const args = (pre && pre.args) || [];
+      if (args.length) {                                   // 'message info text...' still pre-fills the panel
+        const hit = rec.find(function (r) { return r.name.toLowerCase() === args[0].toLowerCase(); });
+        if (hit) { to = hit.name; body = args.slice(1).join(" "); } else { body = args.join(" "); }
+      } else if (msgSaved) {
+        to = msgSaved.to; subject = msgSaved.subject; body = msgSaved.body; restored = true;
+      }
+      if (to && rec.some(function (r) { return r.name === to; })) sel.value = to;
+      subj.value = subject;
+      area.value = body;
+      res.className = "result";
+      res.textContent = "";
+      document.getElementById("messageInfo").textContent =
+        "From " + session.name + " (" + maskEmail(session.email) + "), verified. Only the message body is PGP-encrypted; the subject travels in clear text." +
+        (restored ? " Your unsent draft was restored." : "");
+      updateMessageRecipientInfo();
+      document.getElementById("messageModal").classList.add("open");
+      (subject ? area : subj).focus();
+    }
+    function closeMessagePanel(keepDraft) {
+      if (msgSending) return;
+      const subj = document.getElementById("messageSubject").value;
+      const body = document.getElementById("messageBody").value;
+      msgSaved = keepDraft !== false && (subj.trim() || body.trim())
+        ? { to: document.getElementById("messageTo").value, subject: subj, body: body }
+        : null;
+      document.getElementById("messageModal").classList.remove("open");
+      input.focus();
+    }
+    async function sendFromPanel() {
+      if (msgSending) return;
+      const sel = document.getElementById("messageTo");
+      const subjEl = document.getElementById("messageSubject");
+      const area = document.getElementById("messageBody");
+      const resEl = document.getElementById("messageResult");
+      const sendBtn = document.getElementById("messageSend");
+      const cancelBtn = document.getElementById("messageCancel");
+      function show(lines, bad) { resEl.textContent = lines.join("\n"); resEl.className = "result show" + (bad ? " bad" : ""); }
+      const to = sel.value.trim();
+      const subject = subjEl.value.replace(/[\r\n]+/g, " ").trim();
+      const body = area.value;
+      if (!to) { show(["Choose a recipient."], true); return; }
+      if (!subject) { show(["The subject is required."], true); subjEl.focus(); return; }
+      if (subject.length > MSG_MAX_SUBJECT) { show(["The subject is too long (max " + MSG_MAX_SUBJECT + " characters)."], true); subjEl.focus(); return; }
+      if (!body.trim()) { show(["The message is empty."], true); area.focus(); return; }
+      if (body.length > MSG_MAX_BODY) { show(["The message is too long: " + body.length + " characters (max " + MSG_MAX_BODY + ")."], true); area.focus(); return; }
+      if (!session || !hasUserToken()) { show(["Your session is not verified. Log in again (an emailed code is needed)."], true); return; }
+
+      msgSending = true;
+      busy = true;
+      input.disabled = true;
+      sendBtn.disabled = true;
+      cancelBtn.disabled = true;
+      const log = [];
+      const progress = function (t) { log.push(t); show(log, false); };
+      let closed = false;
+      try {
+        const target = findUser(to);
+        let ciphertext = null;
+        let usedPgp = false;
+        if (target && (target.pgp || target.pgpUrl || target.pgpFp)) {
+          try {
+            progress("Resolving recipient PGP key...");
+            const armored = await resolveRecipientPublicKey(target, progress);
+            if (armored) {
+              progress("Encrypting the message body...");
+              ciphertext = await encryptMessage(body, armored);
+              usedPgp = true;
+            } else {
+              progress("No usable PGP key for the recipient: plaintext.");
+            }
+          } catch (e) {
+            progress("PGP key/encrypt failed: " + (e.message || e));
+            progress("Sending as plaintext.");
+          }
+        } else {
+          progress("No known PGP key for the recipient: plaintext.");
+        }
+
+        const payload = {
+          to: to,
+          subject: subject,
+          message: ciphertext || body,
+          encrypted: usedPgp,
+          sender_pubkey: session.publicKey,
+          source: "zedon.tech-terminal",
+          timestamp: new Date().toISOString(),
+          user_token: session.userToken
+        };
+        const size = new TextEncoder().encode(payload.message).length;
+
+        // The history keeps the PLAINTEXT you wrote (it is encrypted on disk with your login password).
+        session.messages = session.messages || [];
+        if (!msgDraft) {
+          msgDraft = { ts: Date.now() };
+          session.messages.push(msgDraft);
+          if (session.messages.length > HISTORY_MAX) session.messages.splice(0, session.messages.length - HISTORY_MAX);
+        }
+        Object.assign(msgDraft, {
+          to: to, subject: subject, from: session.email, size: size, encrypted: usedPgp,
+          plain: true, body: body.slice(0, MSG_MAX_BODY), status: "sending", error: null
+        });
+        await saveSession();
+        progress("Sending → " + to + "  (" + size + " B" + (usedPgp ? ", PGP" : "") + ") ...");
+
+        let res = null;
+        let netError = null;
+        try {
+          res = await fetch(WORKER_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+        } catch (e) {
+          netError = e;
+        }
+        if (res && res.ok) {
+          msgDraft.status = "sent";
+          await saveSession();
+          msgSaved = null;
+          msgDraft = null;
+          document.getElementById("messageModal").classList.remove("open");
+          closed = true;
+          print("Message sent. ✓  (saved in history)", "info");
+        } else {
+          let problem;
+          if (netError) {
+            problem = ["Network error: the message is NOT sent. It is kept in the history as failed; you can try again.", String(netError.message || netError)];
+            msgDraft.error = "network error";
+          } else {
+            const txt = await res.text().catch(function () { return ""; });
+            let data = {};
+            try { data = JSON.parse(txt); } catch (e) {}
+            if (res.status === 401 && data.reason === "user_token") {
+              session.userToken = null;
+              session.userTokenExp = 0;
+              problem = ["Your session expired. Log in again to verify it. The message is kept in the history as failed."];
+              msgDraft.error = "session expired";
+            } else {
+              problem = ["Worker error (" + res.status + "): the message is NOT sent. It is kept in the history as failed.", String(data.error || txt).slice(0, 180)];
+              msgDraft.error = "HTTP " + res.status;
+            }
+          }
+          msgDraft.status = "failed";
+          await saveSession();
+          show(problem.filter(Boolean), true);
+        }
+      } catch (e) {
+        show(["Could not send: " + (e.message || e)], true);
+      } finally {
+        msgSending = false;
+        busy = false;
+        input.disabled = false;
+        sendBtn.disabled = false;
+        cancelBtn.disabled = false;
+        if (closed) input.focus();
+      }
+    }
+    document.getElementById("messageCancel").onclick = function () { closeMessagePanel(true); };
+    document.getElementById("messageSend").onclick = sendFromPanel;
+    document.getElementById("messageTo").addEventListener("change", updateMessageRecipientInfo);
+    document.getElementById("messageSubject").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); document.getElementById("messageBody").focus(); }
+    });
+    document.getElementById("messageBody").addEventListener("keydown", function (e) {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); sendFromPanel(); }
+    });
+
+    // ───── History panel: keyboard-navigable list, selected item in inverse video, Enter opens the whole message ─────
+    const hist = { items: [], els: [], sel: 0, open: -1 };
+    function fmtLocal(ts, secs) {
+      const d = new Date(ts);
+      const p = function (n) { return String(n).padStart(2, "0"); };
+      return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes()) + (secs ? ":" + p(d.getSeconds()) : "");
+    }
+    function historyEntries() {
+      let all = [];
+      if (session) all = session.messages || [];
+      else { try { all = loadStore().guestMessages || []; } catch (e) { all = []; } }
+      return all.slice().reverse();       // newest first
+    }
+    function snippetOf(e) {
+      if (e.encrypted && !e.plain) return "(stored copy is the encrypted text)";
+      return String(e.body || "").replace(/\s+/g, " ").trim().slice(0, 160);
+    }
+    function statusTag(e) {
+      const tags = [];
+      if (e.encrypted) tags.push("PGP");
+      if (e.status === "failed") tags.push("FAILED");
+      else if (e.status === "sending") tags.push("unconfirmed");
+      return tags.length ? "  [" + tags.join(" ") + "]" : "";
+    }
+    function fillHistoryItem(i) {
+      const e = hist.items[i];
+      const r = hist.els[i];
+      r.l1.textContent = (hist.open === i ? "▾ " : "▸ ") + fmtLocal(e.ts) + "  → " + e.to + statusTag(e);
+      r.subj.textContent = e.subject || "(no subject)";
+      const snip = snippetOf(e);
+      r.snip.textContent = snip ? "  —  " + snip : "";
+    }
+    function buildHistoryItem(e, i) {
+      const el = document.createElement("div");
+      el.className = "nc-item";
+      el.setAttribute("role", "option");
+      el.dataset.i = String(i);
+      const head = document.createElement("div"); head.className = "nc-head";
+      const l1 = document.createElement("div"); l1.className = "nc-l1";
+      const l2 = document.createElement("div"); l2.className = "nc-l2";
+      const subj = document.createElement("span"); subj.className = "nc-subj";
+      const snip = document.createElement("span"); snip.className = "nc-snip";
+      l2.appendChild(subj); l2.appendChild(snip);
+      head.appendChild(l1); head.appendChild(l2);
+      el.appendChild(head);
+      hist.els[i] = { el: el, l1: l1, subj: subj, snip: snip, full: null };
+      fillHistoryItem(i);
+      return el;
+    }
+    function historyStatusText(e) {
+      if (e.status === "sent") return "sent";
+      if (e.status === "failed") return "NOT sent (kept here)" + (e.error ? ": " + e.error : "");
+      if (e.status === "sending") return "unconfirmed (the page was closed while sending)";
+      return "saved";
+    }
+    function openHistoryItem(i) {
+      if (hist.open === i) return;
+      closeHistoryItem();
+      const e = hist.items[i];
+      const full = document.createElement("div");
+      full.className = "nc-full";
+      const meta = document.createElement("div");
+      meta.className = "nc-meta";
+      meta.textContent = [
+        "To:       " + e.to,
+        "Subject:  " + (e.subject || "(no subject)"),
+        "Date:     " + fmtLocal(e.ts, true),
+        "Sent as:  " + (e.encrypted ? "PGP-encrypted body" : "plaintext"),
+        "Status:   " + historyStatusText(e)
+      ].join("\n") + (e.encrypted && !e.plain ? "\nNote:     this old entry stored the encrypted text, not what you wrote" : "");
+      const msg = document.createElement("div");
+      msg.className = "nc-msg";
+      msg.textContent = String(e.body || "");
+      full.appendChild(meta);
+      full.appendChild(msg);
+      hist.els[i].el.appendChild(full);
+      hist.els[i].full = full;
+      hist.open = i;
+      fillHistoryItem(i);
+      if (hist.els[i].el.scrollIntoView) hist.els[i].el.scrollIntoView({ block: "nearest" });
+    }
+    function closeHistoryItem() {
+      const i = hist.open;
+      if (i < 0) return;
+      const r = hist.els[i];
+      if (r && r.full) { r.el.removeChild(r.full); r.full = null; }
+      hist.open = -1;
+      if (r) fillHistoryItem(i);
+    }
+    function selectHistory(i) {
+      const n = hist.items.length;
+      if (!n) return;
+      i = Math.max(0, Math.min(n - 1, i));
+      if (hist.open !== -1 && hist.open !== i) closeHistoryItem();   // only the selected item can be open
+      hist.els[hist.sel].el.classList.remove("nc-sel");
+      hist.els[hist.sel].el.removeAttribute("aria-selected");
+      hist.sel = i;
+      hist.els[i].el.classList.add("nc-sel");
+      hist.els[i].el.setAttribute("aria-selected", "true");
+      if (hist.els[i].el.scrollIntoView) hist.els[i].el.scrollIntoView({ block: "nearest" });
+    }
+    function toggleHistory(i) {
+      if (hist.open === i) closeHistoryItem(); else openHistoryItem(i);
+    }
+    function openHistoryPanel() {
+      hist.items = historyEntries();
+      hist.els = [];
+      hist.sel = 0;
+      hist.open = -1;
+      const list = document.getElementById("historyList");
+      const info = document.getElementById("historyInfo");
+      list.textContent = "";
+      if (!hist.items.length) {
+        const d = document.createElement("div");
+        d.className = "nc-empty";
+        d.textContent = session ? "No messages yet. Use: message" : "No saved messages.";
+        list.appendChild(d);
+        info.textContent = (session ? session.name : "guest") + ": no messages";
+      } else {
+        hist.items.forEach(function (e, i) { list.appendChild(buildHistoryItem(e, i)); });
+        hist.els[0].el.classList.add("nc-sel");
+        hist.els[0].el.setAttribute("aria-selected", "true");
+        info.textContent = (session ? session.name : "guest") + ": " + hist.items.length + " message(s), newest first";
+      }
+      document.getElementById("historyModal").classList.add("open");
+      list.scrollTop = 0;
+      list.focus();
+    }
+    document.getElementById("historyClose").onclick = function () {
+      document.getElementById("historyModal").classList.remove("open");
+      input.focus();
+    };
+    document.getElementById("historyList").addEventListener("keydown", function (e) {
+      const n = hist.items.length;
+      if (!n) return;
+      let handled = true;
+      switch (e.key) {
+        case "ArrowDown": selectHistory(hist.sel + 1); break;
+        case "ArrowUp": selectHistory(hist.sel - 1); break;
+        case "PageDown": selectHistory(hist.sel + 5); break;
+        case "PageUp": selectHistory(hist.sel - 5); break;
+        case "Home": selectHistory(0); break;
+        case "End": selectHistory(n - 1); break;
+        case "Enter": case " ": toggleHistory(hist.sel); break;
+        case "ArrowRight": openHistoryItem(hist.sel); break;
+        case "ArrowLeft": closeHistoryItem(); break;
+        default: handled = false;
+      }
+      if (handled) e.preventDefault();
+    });
+    document.getElementById("historyList").addEventListener("click", function (e) {
+      if (e.target.closest(".nc-full")) return;            // selecting / copying the open text must not close it
+      const it = e.target.closest(".nc-item");
+      if (!it) return;
+      const i = parseInt(it.dataset.i, 10);
+      selectHistory(i);
+      toggleHistory(i);
+    });
+
     function runCommand(raw) {
       const line = raw;
       const trimmed = line.trim();
@@ -2075,7 +2492,15 @@
     });
 
     document.addEventListener("click", function (e) {
-      if (!e.target.closest(".modal") && !busy) input.focus();
+      if (document.querySelector(".modal-overlay.open")) return;   // a dialog is open: keep the keyboard inside it
+      if (!e.target.closest(".nc") && !busy) input.focus();
+    });
+    // Esc closes the open dialog (its Cancel / Close button)
+    document.addEventListener("keydown", function (e) {
+      if (e.key !== "Escape") return;
+      const open = document.querySelector(".modal-overlay.open");
+      const btn = open && open.querySelector("button.secondary");
+      if (btn) { e.preventDefault(); btn.click(); }
     });
 
     refreshPrompt();
