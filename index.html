@@ -12,6 +12,7 @@
   <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
   <link rel="manifest" href="site.webmanifest" />
   <script src="https://unpkg.com/openpgp@5.11.2/dist/openpgp.min.js"></script>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
   <style>
     :root {
       --bg: #0a0a0a;
@@ -125,6 +126,14 @@
       max-height: 240px; overflow-y: auto; display: none; flex-shrink: 0;
     }
     .modal .result.show { display: block; }
+    .modal.compact { height: auto; max-height: 92%; }
+    .modal select {
+      width: 100%; background: #0a0a0a; border: 1px solid var(--dim); color: var(--fg);
+      font-family: inherit; font-size: .9em; padding: 8px 10px; border-radius: 6px; margin-bottom: 12px;
+    }
+    .modal .check { display: flex; gap: 8px; align-items: center; font-size: .85em; color: #9c9; margin-bottom: 12px; }
+    .modal .check input { width: auto; margin: 0; }
+    #humanWidget { min-height: 70px; display: flex; justify-content: center; align-items: center; margin-bottom: 12px; }
     @media (max-width: 600px) {
       :root { --fs-base: 13.5px; --pad: 7px; }
       .term-window { border-radius: 8px; }
@@ -162,6 +171,10 @@
         </header>
         <div class="body">
           <div id="decodeKeyInfo" style="font-size:.82em;color:#7a9;margin-bottom:12px;padding:8px 10px;background:#0c140e;border:1px solid var(--dim);border-radius:6px;"></div>
+          <div id="decodeKeyWrap">
+            <label>Key to decrypt with</label>
+            <select id="decodeKey"></select>
+          </div>
           <label>Armored ciphertext (-----BEGIN PGP MESSAGE----- ...)</label>
           <textarea id="decodeCipher" placeholder="Paste encrypted message here..."></textarea>
           <div id="decodePassWrap">
@@ -176,6 +189,42 @@
         </div>
       </div>
     </div>
+
+    <div class="modal-overlay" id="importModal">
+      <div class="modal">
+        <header>
+          <span>import — PGP private key</span>
+        </header>
+        <div class="body">
+          <div id="importInfo" style="font-size:.82em;color:#7a9;margin-bottom:12px;padding:8px 10px;background:#0c140e;border:1px solid var(--dim);border-radius:6px;"></div>
+          <label>Armored private key (-----BEGIN PGP PRIVATE KEY BLOCK----- ...)</label>
+          <textarea id="importKey" placeholder="Paste your private key here..."></textarea>
+          <label>Passphrase of THIS key (may differ from your login password; empty if the key is not protected)</label>
+          <input type="password" id="importPass" placeholder="Key passphrase" />
+          <label class="check" id="importPublishRow"><input type="checkbox" id="importPublish" checked /> Use as my registered key (publish its public part)</label>
+          <div class="actions">
+            <button type="button" class="secondary" id="importCancel">Cancel</button>
+            <button type="button" id="importRun">Import</button>
+          </div>
+          <div class="result" id="importResult"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="humanModal">
+      <div class="modal compact">
+        <header>
+          <span>verify — human check</span>
+        </header>
+        <div class="body">
+          <div id="humanStatus" style="font-size:.85em;color:#7a9;margin-bottom:12px;"></div>
+          <div id="humanWidget"></div>
+          <div class="actions">
+            <button type="button" class="secondary" id="humanCancel">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -184,6 +233,350 @@
     const WORKER_URL = "https://wispy-sky-14c4.the-original-vij.workers.dev/send";
     const STORAGE_KEY = "zedon_terminal_v1";
     const INSTALL_KEY = "zedon_install_v1";
+    const TURNSTILE_SITE_KEY = "0x4AAAAAAFKP8YyP93rHLcry"; // public; the secret lives in the Worker
+    const TOKEN_KEY = "zedon_token_v1";
+    // Username registry lives on the same Worker (…/users/check, …/users/register)
+    const API_BASE = WORKER_URL.replace(/\/send\/?$/, "");
+    async function registryCall(path, body) {
+      const res = await fetch(API_BASE + path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      let data = {};
+      try { data = await res.json(); } catch (e) {}
+      return { ok: res.ok, status: res.status, data: data || {} };
+    }
+
+    // ───── keccak256 begin (Ethereum Keccak-256, 0x01 padding; NOT NIST SHA3-256) ─────
+    const KECCAK_RC = [
+      "0000000000000001", "0000000000008082", "800000000000808a", "8000000080008000",
+      "000000000000808b", "0000000080000001", "8000000080008081", "8000000000008009",
+      "000000000000008a", "0000000000000088", "0000000080008009", "000000008000000a",
+      "000000008000808b", "800000000000008b", "8000000000008089", "8000000000008003",
+      "8000000000008002", "8000000000000080", "000000000000800a", "800000008000000a",
+      "8000000080008081", "8000000000008080", "0000000080000001", "8000000080008008"
+    ].map(function (x) { return [parseInt(x.slice(0, 8), 16) >>> 0, parseInt(x.slice(8), 16) >>> 0]; });
+    const KECCAK_ROTC = [1, 3, 6, 10, 15, 21, 28, 36, 45, 55, 2, 14, 27, 41, 56, 8, 25, 43, 62, 18, 39, 61, 20, 44];
+    const KECCAK_PILN = [10, 7, 11, 17, 18, 3, 5, 16, 8, 21, 24, 4, 15, 23, 19, 13, 12, 2, 20, 14, 22, 9, 6, 1];
+    function rotl64(hi, lo, n) {
+      if (n === 32) return [lo, hi];
+      if (n < 32) return [((hi << n) | (lo >>> (32 - n))) >>> 0, ((lo << n) | (hi >>> (32 - n))) >>> 0];
+      const m = n - 32;
+      return [((lo << m) | (hi >>> (32 - m))) >>> 0, ((hi << m) | (lo >>> (32 - m))) >>> 0];
+    }
+    function keccakF(hi, lo) {
+      const bcH = new Uint32Array(5), bcL = new Uint32Array(5);
+      for (let round = 0; round < 24; round++) {
+        for (let i = 0; i < 5; i++) {
+          bcH[i] = hi[i] ^ hi[i + 5] ^ hi[i + 10] ^ hi[i + 15] ^ hi[i + 20];
+          bcL[i] = lo[i] ^ lo[i + 5] ^ lo[i + 10] ^ lo[i + 15] ^ lo[i + 20];
+        }
+        for (let i = 0; i < 5; i++) {
+          const r = rotl64(bcH[(i + 1) % 5], bcL[(i + 1) % 5], 1);
+          const tH = bcH[(i + 4) % 5] ^ r[0], tL = bcL[(i + 4) % 5] ^ r[1];
+          for (let j = 0; j < 25; j += 5) { hi[j + i] ^= tH; lo[j + i] ^= tL; }
+        }
+        let tH = hi[1], tL = lo[1];
+        for (let i = 0; i < 24; i++) {
+          const j = KECCAK_PILN[i], h0 = hi[j], l0 = lo[j];
+          const r = rotl64(tH, tL, KECCAK_ROTC[i]);
+          hi[j] = r[0]; lo[j] = r[1];
+          tH = h0; tL = l0;
+        }
+        for (let j = 0; j < 25; j += 5) {
+          for (let i = 0; i < 5; i++) { bcH[i] = hi[j + i]; bcL[i] = lo[j + i]; }
+          for (let i = 0; i < 5; i++) {
+            hi[j + i] ^= ~bcH[(i + 1) % 5] & bcH[(i + 2) % 5];
+            lo[j + i] ^= ~bcL[(i + 1) % 5] & bcL[(i + 2) % 5];
+          }
+        }
+        hi[0] ^= KECCAK_RC[round][0];
+        lo[0] ^= KECCAK_RC[round][1];
+      }
+    }
+    function le32hex(x) {
+      let s = "";
+      for (let k = 0; k < 4; k++) s += ((x >>> (8 * k)) & 0xff).toString(16).padStart(2, "0");
+      return s;
+    }
+    /** Keccak-256 of a UTF-8 string → 64 lowercase hex chars. */
+    function keccak256Hex(str) {
+      const msg = new TextEncoder().encode(str);
+      const rate = 136;
+      const data = new Uint8Array(msg.length + (rate - (msg.length % rate)));
+      data.set(msg);
+      data[msg.length] ^= 0x01;
+      data[data.length - 1] ^= 0x80;
+      const hi = new Uint32Array(25), lo = new Uint32Array(25);
+      for (let off = 0; off < data.length; off += rate) {
+        for (let i = 0; i < rate / 8; i++) {
+          const b = off + i * 8;
+          lo[i] ^= data[b] | (data[b + 1] << 8) | (data[b + 2] << 16) | (data[b + 3] << 24);
+          hi[i] ^= data[b + 4] | (data[b + 5] << 8) | (data[b + 6] << 16) | (data[b + 7] << 24);
+        }
+        keccakF(hi, lo);
+      }
+      let out = "";
+      for (let i = 0; i < 4; i++) out += le32hex(lo[i]) + le32hex(hi[i]);
+      return out;
+    }
+    // ───── keccak256 end ─────
+
+    // ───── Human check: Cloudflare Turnstile → Worker session token ─────
+    // The challenge is solved once; the Worker verifies it and returns a signed token
+    // (valid ~7 days). Messages and registrations carry that token, and the Worker's
+    // daily limits are counted per token, so people behind a shared IP (CGNAT) do not
+    // use up each other's quota.
+    function loadToken() {
+      try {
+        const t = JSON.parse(localStorage.getItem(TOKEN_KEY) || "null");
+        if (t && t.token && t.exp * 1000 > Date.now() + 60000) return t.token;
+      } catch (e) {}
+      return null;
+    }
+    function clearToken() {
+      try { localStorage.removeItem(TOKEN_KEY); } catch (e) {}
+    }
+    function solveTurnstile() {
+      return new Promise(function (resolve, reject) {
+        const modal = document.getElementById("humanModal");
+        const box = document.getElementById("humanWidget");
+        const status = document.getElementById("humanStatus");
+        let widgetId = null;
+        let finished = false;
+        let overall = null;
+        function finish(err, tok) {
+          if (finished) return;
+          finished = true;
+          clearTimeout(overall);
+          try { if (widgetId !== null && window.turnstile) window.turnstile.remove(widgetId); } catch (e) {}
+          box.innerHTML = "";
+          modal.classList.remove("open");
+          if (err) reject(err); else resolve(tok);
+        }
+        document.getElementById("humanCancel").onclick = function () { finish(new Error("cancelled")); };
+        status.textContent = "Human check, once per session. The challenge shows here only if needed.";
+        modal.classList.add("open");
+        overall = setTimeout(function () { finish(new Error("timed out")); }, 90000);
+        (function waitForApi(tries) {
+          if (finished) return;
+          if (window.turnstile && window.turnstile.render) {
+            try {
+              widgetId = window.turnstile.render(box, {
+                sitekey: TURNSTILE_SITE_KEY,
+                theme: "dark",
+                appearance: "interaction-only",
+                callback: function (t) { finish(null, t); },
+                "error-callback": function () { status.textContent = "Challenge error, retrying…"; }
+              });
+            } catch (e) { finish(e); }
+          } else if (tries >= 100) {
+            finish(new Error("Turnstile script did not load (blocked by an extension or the network?)"));
+          } else {
+            setTimeout(function () { waitForApi(tries + 1); }, 100);
+          }
+        })(0);
+      });
+    }
+    async function getSessionToken(force) {
+      if (!force) {
+        const t = loadToken();
+        if (t) return t;
+      }
+      print("Human check required (once per session)...", "sys");
+      const ts = await solveTurnstile();
+      const r = await registryCall("/token", { turnstile: ts });
+      if (!r.ok) throw new Error(r.data.error || ("HTTP " + r.status));
+      try { localStorage.setItem(TOKEN_KEY, JSON.stringify({ token: r.data.token, exp: r.data.exp })); } catch (e) {}
+      return r.data.token;
+    }
+
+    // ───── Account helpers (email OTP) ─────
+    function maskEmail(e) {
+      const s = String(e || "");
+      const i = s.indexOf("@");
+      return i > 0 ? s[0] + "***" + s.slice(i) : "***";
+    }
+    function hasUserToken() {
+      return !!(session && session.userToken && session.userTokenExp * 1000 > Date.now());
+    }
+    let restoreCtx = null; // set while a new-device restore waits for the key in the import panel
+    function resetInteractive() {
+      interactive = null;
+      restoreCtx = null;
+      document.getElementById("importModal").classList.remove("open");
+      input.type = "text";
+      refreshPrompt();
+    }
+    /** Ask the Worker to email a registration code. Returns true when it was sent. */
+    async function requestRegisterOtp(d) {
+      busy = true;
+      input.disabled = true;
+      let ok = false;
+      try {
+        const tok = await getSessionToken(false);
+        const r = await registryCall("/register/start", { name: d.name, email: d.email, token: tok });
+        if (r.ok) {
+          print("A 6-digit code was sent to " + maskEmail(d.email) + " (valid " + Math.round((r.data.expires_in || 600) / 60) + " min).", "info");
+          ok = true;
+        } else {
+          if (r.status === 401) clearToken();
+          print(r.data.error || ("Registry error (" + r.status + ")"), "err");
+        }
+      } catch (e) {
+        print("Verification failed: " + (e.message || e), "err");
+      } finally {
+        busy = false;
+        input.disabled = false;
+        input.focus();
+      }
+      return ok;
+    }
+    // ───── What the user is told about login / export / import (also: 'help <command>') ─────
+    const EXPLAIN = {
+      login: [
+        "How login works",
+        "  1. Your keys and messages live ONLY in this browser, encrypted with your local password.",
+        "     'login <name>' asks for that password and unlocks them. The password is never sent anywhere.",
+        "  2. To SEND messages the server must know it is really you. When your session is not verified",
+        "     (first login on this device, or after the 30-day verification expired) a 6-digit code is",
+        "     emailed to the address you registered with. Type it to verify.",
+        "     Without verification you can still read and decrypt, but not send.",
+        "  3. New device or browser? 'login <name>' restores your account there (see below)."
+      ],
+      restore: [
+        "How restoring an account on a new device works",
+        "  1. A 6-digit code is emailed to the address you registered with. It proves the account is yours.",
+        "  2. You choose a NEW password for this device. It only protects the keys stored in this browser.",
+        "  3. You import your PRIVATE key file (<name>-private.asc, made by 'export' on the old device)",
+        "     and enter that key's own passphrase (usually your OLD password).",
+        "  The server never has your private key. It only checks that the key you import matches the",
+        "  public key stored for the account.",
+        "  Lost the key file? You can create a NEW key instead, but old messages stay unreadable.",
+        "  Your local message history is not restored (it was never on the server)."
+      ],
+      export: [
+        "How export works",
+        "  export        downloads <name>.asc (public key) and <name>-private.asc (PRIVATE key)",
+        "  export all    also downloads every other key of this account (imported / previous)",
+        "  - The private key file is your BACKUP. It stays protected by the key's passphrase (your login",
+        "    password at registration, or the imported key's own passphrase).",
+        "  - Keep it offline and safe: anyone with the file AND the passphrase can read your messages.",
+        "  - The server never receives it. If the file is lost and this browser is wiped, the messages",
+        "    cannot be recovered.",
+        "  - To restore on another device: 'login <name>' there, then import this file."
+      ],
+      import: [
+        "How import works",
+        "  Imports a PGP private key you already have (a file from 'export', or your own gpg key).",
+        "  - The key stays in this browser, encrypted with your login password. It is never uploaded.",
+        "  - The key keeps its OWN passphrase, which may differ from your login password.",
+        "    You enter it in 'decode' each time; it is not stored.",
+        "  - 'Use as my registered key' ticked: only the PUBLIC part is sent to the server, people encrypt",
+        "    to this key from now on, and your previous key stays here for old messages.",
+        "    Unticked: the key is only added here, for decrypting.",
+        "  - Publishing needs a verified session."
+      ]
+    };
+    function explain(topic) {
+      EXPLAIN[topic].forEach(function (l) { print(l, "sys"); });
+    }
+
+    /** Email a login code for `name`; `where` describes the address for the user. Returns true when sent. */
+    async function requestLoginOtp(name, where) {
+      busy = true;
+      input.disabled = true;
+      let ok = false;
+      try {
+        const tok = await getSessionToken(false);
+        const r = await registryCall("/login/start", { name: name, token: tok });
+        if (r.ok) {
+          print("A verification code was sent to " + where + " (valid " + Math.round((r.data.expires_in || 600) / 60) + " min).", "info");
+          ok = true;
+        } else {
+          if (r.status === 401) clearToken();
+          print("Could not request a code: " + (r.data.error || ("HTTP " + r.status)), "err");
+        }
+      } catch (e) {
+        print("Verification failed: " + (e.message || e), "err");
+      } finally {
+        busy = false;
+        input.disabled = false;
+        input.focus();
+      }
+      return ok;
+    }
+    /** After the local password check: email a login code, then wait for it in the 'login_otp' step. */
+    async function startLoginOtp() {
+      print("Your session is not verified (first login here, or the 30-day verification expired).", "sys");
+      if (await requestLoginOtp(session.name, maskEmail(session.email))) {
+        interactive = { step: "login_otp", data: {} };
+        input.type = "text";
+        print("The code proves the account is yours, so the server accepts your messages.", "sys");
+        print("Enter the code ('resend' for a new one; 'cancel' keeps you logged in, unverified):");
+        promptLabel.textContent = "code>";
+      } else {
+        resetInteractive();
+        print("Logged in, but not verified: sending messages is disabled. Log in again to retry.", "warn");
+      }
+    }
+    /** New device: confirm that the account exists, then email the login code. */
+    async function beginRestore(name) {
+      busy = true;
+      input.disabled = true;
+      let ok = false;
+      try {
+        try {
+          await getSessionToken(false);
+        } catch (e) {
+          print("Verification failed: " + (e.message || e), "err");
+          return;
+        }
+        const r = await registryCall("/users/check", { name: name });
+        if (!r.ok) {
+          print("Registry error (" + r.status + ")" + (r.data.error ? ": " + r.data.error : "") + ".", "err");
+        } else if (r.data.available) {
+          print("There is no account named '" + name + "'. Use: register " + name, "err");
+        } else if (r.data.reason !== "taken") {
+          print("'" + name + "' cannot be restored (" + (r.data.reason || "unavailable") + ").", "err");
+        } else {
+          ok = true;
+        }
+      } catch (e) {
+        print("Registry unreachable: " + (e.message || e), "err");
+      } finally {
+        busy = false;
+        input.disabled = false;
+        input.focus();
+      }
+      if (!ok) { resetInteractive(); return; }
+      if (!(await requestLoginOtp(name, "the email address registered for this account"))) { resetInteractive(); return; }
+      interactive = { step: "restore_otp", data: { name: name } };
+      input.type = "text";
+      print("Enter the code ('resend' for a new one, 'cancel' to stop):");
+      promptLabel.textContent = "code>";
+    }
+    function printRestoreOptions(d) {
+      print("Next: your private key. Options:", "sys");
+      print("  import   open the key panel and paste " + d.name + "-private.asc (from 'export' on your old device)", "sys");
+      print("  newkey   the key file is lost: create a NEW key (old messages stay unreadable)", "sys");
+      print("  cancel   stop; nothing is saved on this device", "sys");
+    }
+    async function finishRestore(d, publicKey, privateKey, loginPass) {
+      session = {
+        name: d.name, password: d.password,
+        publicKey: publicKey, privateKey: privateKey, activeLoginPass: loginPass, keys: [],
+        email: d.email, userToken: d.userToken, userTokenExp: d.exp,
+        messages: [], created: Date.now()
+      };
+      await saveSession();
+      currentUser = d.name;
+      resetInteractive();
+      print("Restored. Logged in as: " + d.name, "info");
+      print("Public key fingerprint: " + fingerprintShort(publicKey), "sys");
+      print("Other or older keys: bring them back with 'import' (untick 'Use as my registered key').", "sys");
+    }
 
     const DOHStatus = { NoError: 0 };
     async function queryDNSRecords(hostname, recordType) {
@@ -251,10 +644,10 @@
       return openpgp.encrypt({ message, encryptionKeys: publicKey, format: "armored" });
     }
     async function decryptMessage(ciphertext, privateKeyArmored, passphrase) {
-      const privateKey = await openpgp.decryptKey({
-        privateKey: await openpgp.readPrivateKey({ armoredKey: privateKeyArmored }),
-        passphrase
-      });
+      let privateKey = await openpgp.readPrivateKey({ armoredKey: privateKeyArmored });
+      if (!privateKey.isDecrypted()) {
+        privateKey = await openpgp.decryptKey({ privateKey: privateKey, passphrase: passphrase });
+      }
       const message = await openpgp.readMessage({ armoredMessage: ciphertext });
       const { data } = await openpgp.decrypt({ message, decryptionKeys: privateKey, format: "utf8" });
       return data;
@@ -281,18 +674,24 @@
         return null;
       }
     }
+    // armored public key -> full hex fingerprint (filled by primeFingerprint, read synchronously)
+    const fpCache = new Map();
+    async function primeFingerprint(armored) {
+      if (!armored || !/BEGIN PGP/.test(armored)) return null;
+      if (fpCache.has(armored)) return fpCache.get(armored);
+      const fp = await fingerprintOfArmored(armored);
+      if (fp) fpCache.set(armored, fp);
+      return fp;
+    }
+    /** Last 16 hex chars of the key fingerprint (same format as DNS fp=). */
     function fingerprintShort(armoredOrFp) {
       if (!armoredOrFp) return "(none)";
-      // already a hex fingerprint?
-      const norm = normalizeFp(armoredOrFp);
-      if (norm.length >= 16 && norm.length <= 40 && !/BEGIN/.test(armoredOrFp)) {
-        return norm.slice(-16);
+      if (/BEGIN PGP/.test(armoredOrFp)) {
+        const fp = fpCache.get(armoredOrFp);
+        return fp ? fp.slice(-16) : "(unknown)";
       }
-      try {
-        const m = armoredOrFp.match(/-----BEGIN PGP PUBLIC KEY BLOCK-----([\s\S]+?)-----END/);
-        if (!m) return norm.slice(-16) || "(?)";
-        return m[1].replace(/\s+/g, "").slice(-16).toUpperCase();
-      } catch { return "(?)"; }
+      const norm = normalizeFp(armoredOrFp);
+      return norm ? norm.slice(-16) : "(?)";
     }
     /** Resolve remote user PGP: fetch URL if needed, verify against DNS fingerprint */
     async function resolveRecipientPublicKey(target) {
@@ -358,6 +757,11 @@
       const payload = {
         publicKey: session.publicKey,
         privateKey: session.privateKey,
+        activeLoginPass: session.activeLoginPass !== false, // true: the key is protected by the login password
+        keys: session.keys || [],                            // other keys (imported / previous)
+        email: session.email || null,
+        userToken: session.userToken || null,
+        userTokenExp: session.userTokenExp || 0,
         messages: session.messages || [],
         created: session.created || Date.now()
       };
@@ -365,20 +769,25 @@
       store.users[session.name] = await encryptLocal(session.password, JSON.stringify(payload));
       saveStore(store);
     }
+    function sessionFromPayload(name, password, data) {
+      return {
+        name: name, password: password,
+        publicKey: data.publicKey, privateKey: data.privateKey,
+        activeLoginPass: data.activeLoginPass !== false,
+        keys: data.keys || [],
+        email: data.email || null,
+        userToken: data.userToken || null,
+        userTokenExp: data.userTokenExp || 0,
+        messages: data.messages || [], created: data.created
+      };
+    }
     async function loadUser(name, password) {
       const store = loadStore();
-      const blob = store.users && store.users[name];
-      if (!blob) {
-        // try case-insensitive
-        const key = Object.keys(store.users || {}).find(k => k.toLowerCase() === name.toLowerCase());
-        if (!key) throw new Error("User not found locally");
-        const json = await decryptLocal(password, store.users[key]);
-        const data = JSON.parse(json);
-        return { name: key, password, publicKey: data.publicKey, privateKey: data.privateKey, messages: data.messages || [], created: data.created };
-      }
-      const json = await decryptLocal(password, blob);
-      const data = JSON.parse(json);
-      return { name, password, publicKey: data.publicKey, privateKey: data.privateKey, messages: data.messages || [], created: data.created };
+      const users = store.users || {};
+      const key = users[name] ? name : Object.keys(users).find(k => k.toLowerCase() === name.toLowerCase());
+      if (!key) throw new Error("User not found locally");
+      const json = await decryptLocal(password, users[key]);
+      return sessionFromPayload(key, password, JSON.parse(json));
     }
     function listLocalUserNames() {
       return Object.keys(loadStore().users || {});
@@ -484,6 +893,9 @@
             if (u2 && !remoteUsers.find(function (x) { return x.name === u2.name; })) remoteUsers.push(u2);
           });
         }
+        for (const u of remoteUsers) {
+          try { if (u.pgp && /BEGIN PGP/.test(u.pgp)) await primeFingerprint(u.pgp); } catch (e) {}
+        }
         print("  " + remoteUsers.length + " user record(s) found.", "sys");
       } catch (e) {
         print("DNS error: " + (e.message || e), "warn");
@@ -505,8 +917,16 @@
       return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i.test(email);
     }
 
-    async function doSendMessage(to, fromEmail, body) {
-      if (!isValidEmail(fromEmail)) { print("Invalid email: " + fromEmail, "err"); return; }
+    async function doSendMessage(to, body) {
+      if (!session) { print("Guests cannot send messages. Use: register <name> or login <name>", "err"); return; }
+      if (!session.email) {
+        print("This local account is not registered on the server. Use nuke, then register.", "err");
+        return;
+      }
+      if (!hasUserToken()) {
+        print("Your session is not verified. Log in again (an emailed code is needed).", "err");
+        return;
+      }
       if (!body.trim()) { print("Message cannot be empty.", "err"); return; }
 
       const target = findUser(to);
@@ -534,29 +954,19 @@
 
       const payload = {
         to: to,
-        from: fromEmail,
         message: ciphertext || body,
         encrypted: usedPgp,
-        sender_pubkey: session ? session.publicKey : null,
+        sender_pubkey: session.publicKey,
         source: "zedon.tech-terminal",
         timestamp: new Date().toISOString(),
-        from_user: currentUser
+        user_token: session.userToken
       };
 
       const size = new TextEncoder().encode(payload.message).length;
-      const entry = { ts: Date.now(), to: to, from: fromEmail, size: size, encrypted: usedPgp, body: payload.message.slice(0, 2000) };
-
-      if (session) {
-        session.messages = session.messages || [];
-        session.messages.push(entry);
-        await saveSession();
-      } else {
-        const store = loadStore();
-        store.guestMessages = store.guestMessages || [];
-        store.guestMessages.push(entry);
-        if (store.guestMessages.length > 50) store.guestMessages = store.guestMessages.slice(-50);
-        saveStore(store);
-      }
+      const entry = { ts: Date.now(), to: to, from: session.email, size: size, encrypted: usedPgp, body: payload.message.slice(0, 2000) };
+      session.messages = session.messages || [];
+      session.messages.push(entry);
+      await saveSession();
 
       print("Sending → " + to + "  (" + size + " B" + (usedPgp ? ", PGP" : "") + ") ...", "sys");
       busy = true;
@@ -571,13 +981,22 @@
           print("Message sent. ✓  (also saved locally)", "info");
         } else {
           const txt = await res.text().catch(function () { return ""; });
-          print("Worker error (" + res.status + "). Message kept locally.", "warn");
-          if (txt) print(txt.slice(0, 180), "err");
+          let data = {};
+          try { data = JSON.parse(txt); } catch (e) {}
+          if (res.status === 401 && data.reason === "user_token") {
+            session.userToken = null;
+            session.userTokenExp = 0;
+            await saveSession();
+            print("Your session expired. Log in again to verify it. Message kept locally, not sent.", "warn");
+          } else {
+            print("Worker error (" + res.status + "). Message kept locally.", "warn");
+            const shown = data.error || txt;
+            if (shown) print(String(shown).slice(0, 180), "err");
+          }
         }
       } catch (e) {
         print("Network error — message saved locally.", "warn");
         print(String(e.message || e), "err");
-        print("WORKER_URL = " + WORKER_URL, "sys");
       } finally {
         busy = false;
         input.disabled = false;
@@ -649,86 +1068,19 @@
     } catch (e) {}
     if (isStandalone()) markInstalled("standalone");
 
-    async function diagnoseInstall() {
-      const ua = navigator.userAgent;
-      if (/firefox/i.test(ua) && !isAndroid()) {
-        print("Firefox desktop cannot install web apps. Use Chrome, Edge or another Chromium browser.", "warn");
-      } else if (/safari/i.test(ua) && !/chrom|crios|edg|android/i.test(ua) && !isIOS()) {
-        print("Safari (macOS) has no install prompt. Use File → Add to Dock.", "warn");
-      }
-      if (location.protocol === "file:") {
-        print("Page opened from a file:// URL. Installing needs https:// (or http://localhost).", "err");
-        return;
-      }
-      if (location.protocol !== "https:" && !/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) {
-        print("Page is not served over HTTPS. Installing needs a secure origin.", "err");
-      }
-      const link = document.querySelector('link[rel="manifest"]');
-      if (!link) { print("No <link rel=\"manifest\"> in the page.", "err"); return; }
-      const mUrl = link.href;
-      let m;
-      try {
-        const r = await fetch(mUrl, { credentials: "same-origin", cache: "no-store" });
-        if (!r.ok) { print("Manifest not reachable: HTTP " + r.status + "  " + mUrl, "err"); return; }
-        m = await r.json();
-      } catch (e) {
-        print("Manifest fetch/parse failed: " + (e.message || e) + "  " + mUrl, "err");
-        return;
-      }
-      const problems = [];
-      const modes = ["standalone", "fullscreen", "minimal-ui", "window-controls-overlay"];
-      if (!(m.name || m.short_name)) problems.push("name / short_name missing");
-      if (!m.start_url) problems.push("start_url missing");
-      const dispOk = modes.indexOf(m.display) !== -1 ||
-        (Array.isArray(m.display_override) && m.display_override.some(function (d) { return modes.indexOf(d) !== -1; }));
-      if (!dispOk) problems.push('display is "' + (m.display || "browser (default)") + '", it must be "standalone"');
-      const icons = Array.isArray(m.icons) ? m.icons : [];
-      function findIcon(n) {
-        return icons.find(function (i) {
-          return String(i.sizes || "").split(/\s+/).some(function (sz) { return parseInt(sz, 10) >= n; });
-        });
-      }
-      for (const n of [192, 512]) {
-        const ic = findIcon(n);
-        if (!ic || !ic.src) { problems.push("no " + n + "x" + n + " icon in the manifest"); continue; }
-        const u = new URL(ic.src, mUrl).href;
-        try {
-          const r = await fetch(u, { cache: "no-store" });
-          const ct = (r.headers && r.headers.get && r.headers.get("content-type")) || "image/";
-          if (!r.ok) problems.push(n + "px icon not reachable: HTTP " + r.status + "  " + (r.url || u));
-          else if (!/^image\//i.test(ct)) problems.push(n + "px icon is not an image (" + ct + ")  " + u);
-        } catch (e) {
-          problems.push(n + "px icon fetch failed  " + u);
-        }
-      }
-      if (problems.length) {
-        print("Manifest problems found:", "err");
-        problems.forEach(function (x) { print("  - " + x, "err"); });
-      } else {
-        print("Manifest looks fine (" + mUrl + ").", "info");
-        print("Then it is probably already installed, or the browser has not offered the prompt yet.", "sys");
-        print("Reload the page and run 'install' again, or use the install icon in the address bar.", "sys");
-      }
-    }
-
-    async function printManualInstallHelp() {
+    function printManualInstallHelp() {
       if (isIOS()) {
         print("iOS has no install API. Do it by hand:", "sys");
         print("  Share (□↑) → Add to Home Screen");
-        return;
+      } else {
+        print("The browser did not offer an install prompt.", "warn");
+        print("Use the browser menu → 'Install app' / 'Add to Home screen'.", "sys");
+        print("(Not every browser can install web apps, and nothing is offered if it is already installed.)", "sys");
       }
-      print("The browser did not offer an install prompt. Checking why...", "warn");
-      await diagnoseInstall();
     }
 
     async function runInstall() {
-      if (!deferredPrompt) {
-        busy = true;
-        input.disabled = true;
-        try { await printManualInstallHelp(); }
-        finally { busy = false; input.disabled = false; input.focus(); }
-        return;
-      }
+      if (!deferredPrompt) { printManualInstallHelp(); return; }
       const dp = deferredPrompt;
       deferredPrompt = null; // the event is single-use
       busy = true;
@@ -788,22 +1140,30 @@
     // ───────────── /PWA install tracking ─────────────
 
     const commands = {
-      help: function () {
+      help: function (args) {
+        const topic = ((args && args[0]) || "").toLowerCase();
+        if (topic) {
+          if (topic === "login") { explain("login"); print(""); explain("restore"); return; }
+          if (EXPLAIN[topic]) { explain(topic); return; }
+          print("No help topic '" + topic + "'. Topics: login, export, import", "err");
+          return;
+        }
         print("Available commands:", "sys");
-        print("  help              – this list");
+        print("  help [command]    – this list; 'help login|export|import' explains how they work");
         print("  whoami            – current identity");
         print("  users             – users (DNS + local)");
         print("  about             – short info");
         print("  clear             – clear screen");
         print("  history           – sent messages (time, to, size)");
-        print("  register <name>   – name yourself + password + PGP keygen");
-        print("  login <name>      – login as local user");
+        print("  register <name>   – claim a name: email (twice) + emailed code + password + PGP keygen");
+        print("  login <name>      – login (password, then an emailed code when not verified)");
         print("  logout            – back to guest");
-        print("  message           – send message (interactive or args)");
-        print("  message <to> <email> <text...>");
-        print("  decode            – decrypt PGP message (panel)");
+        print("  message           – send message (login required; interactive or args)");
+        print("  message <to> <text...>");
+        print("  decode            – decrypt PGP message (panel, pick key + passphrase)");
+        print("  import            – import a PGP private key (own passphrase)");
         print("  pubkey            – show your public key");
-        print("  export            – download PGP key file(s) named after user");
+        print("  export [all]      – download your key files (your backup!); explains how it works");
         print("  install           – install as an app (asks to confirm)");
         print("  uninstall         – clean up app data + how to remove it (asks to confirm)");
         print("  nuke              – wipe all local data (GDPR)");
@@ -815,7 +1175,12 @@
         print(currentUser);
         print("  host : " + DOMAIN);
         print("  mode : " + (session ? "authenticated local" : "guest"));
-        if (session) print("  pgp  : " + fingerprintShort(session.publicKey));
+        if (session) {
+          print("  pgp  : " + fingerprintShort(session.publicKey));
+          print("  mail : " + (session.email ? maskEmail(session.email) : "(none, not registered on the server)"));
+          print("  auth : " + (hasUserToken() ? "verified until " + fmtTs(session.userTokenExp * 1000) : "not verified"));
+          if ((session.keys || []).length) print("  keys : +" + session.keys.length + " more (imported / previous), see decode");
+        }
         (function () {
           const st = installState();
           let app = "not installed";
@@ -888,7 +1253,7 @@
           print(ts + "  → " + m.to + "  " + size + " B");
         });
       },
-      register: function (args) {
+      register: async function (args) {
         if (session) { print("Already logged in. Use: logout", "err"); return; }
         const name = (args[0] || "").trim();
         if (!name || !/^[a-zA-Z0-9._-]{2,32}$/.test(name)) {
@@ -900,24 +1265,78 @@
           print("Name already exists locally. Use: login " + name, "err");
           return;
         }
-        interactive = { step: "reg_pass", data: { name: name } };
+        if (remoteUsers.some(function (u) { return u.name.toLowerCase() === name.toLowerCase(); })) {
+          print("'" + name + "' is a reserved system user.", "err");
+          return;
+        }
+        busy = true;
+        input.disabled = true;
+        print("Checking name in the registry...", "sys");
+        let available = false;
+        let ipHash = null;
+        try {
+          try {
+            await getSessionToken(false);
+          } catch (e) {
+            print("Verification failed: " + (e.message || e), "err");
+            return;
+          }
+          const r = await registryCall("/users/check", { name: name });
+          if (!r.ok) {
+            print("Registry error (" + r.status + ")" + (r.data.error ? ": " + r.data.error : "") + ".", "err");
+          } else if (!r.data.available) {
+            print("Name '" + name + "' is not available" + (r.data.reason ? " (" + r.data.reason + ")" : "") + ".", "err");
+          } else if (!r.data.ip) {
+            print("Could not determine your IP address for the registry hash.", "err");
+          } else {
+            ipHash = keccak256Hex(String(r.data.ip)); // computed here, the raw IP is never sent back
+            available = true;
+          }
+        } catch (e) {
+          print("Registry unreachable: " + (e.message || e), "err");
+          print("Registration needs the registry. Try again later.", "warn");
+        } finally {
+          busy = false;
+          input.disabled = false;
+          input.focus();
+        }
+        if (!available) return;
+        print("Registry will store: name, email, public key + fingerprint, keccak256(your IP) = " + ipHash.slice(0, 16) + "…", "sys");
+        print("Your IP address is logged by the server.", "sys");
+        interactive = { step: "reg_email1", data: { name: name, ipHash: ipHash } };
         print("Register: " + name, "sys");
-        print("Choose a password (min 6 chars, protects key + data):");
-        promptLabel.textContent = "password>";
-        input.type = "password";
+        print("Email address (a one-time code will be sent to it):");
+        promptLabel.textContent = "email>";
+        input.type = "text";
       },
       login: function (args) {
         if (session) { print("Already logged in (" + session.name + "). Use: logout", "err"); return; }
         const name = (args[0] || "").trim();
-        if (!name) { print("Usage: login <name>", "err"); return; }
-        if (!listLocalUserNames().some(function (x) { return x.toLowerCase() === name.toLowerCase(); })) {
-          print("No such local user. Use: register " + name, "err");
+        if (!name) {
+          print("Usage: login <name>", "err");
+          explain("login");
           return;
         }
-        interactive = { step: "login_pass", data: { name: name } };
-        print("Password:");
-        promptLabel.textContent = "password>";
-        input.type = "password";
+        if (!/^[a-zA-Z0-9._-]{2,32}$/.test(name)) { print("Invalid name.", "err"); return; }
+        const local = listLocalUserNames().find(function (x) { return x.toLowerCase() === name.toLowerCase(); });
+        if (local) {
+          interactive = { step: "login_pass", data: { name: name } };
+          print("Password: unlocks the keys stored in THIS browser (it is never sent anywhere).", "sys");
+          print("If your session is not verified, an emailed code is asked next ('help login' explains).", "sys");
+          print("Password:");
+          promptLabel.textContent = "password>";
+          input.type = "password";
+          return;
+        }
+        if (remoteUsers.some(function (u) { return u.name.toLowerCase() === name.toLowerCase(); })) {
+          print("'" + name + "' is a reserved system user.", "err");
+          return;
+        }
+        print("There is no local profile named '" + name + "' in this browser.", "warn");
+        explain("restore");
+        interactive = { step: "restore_confirm", data: { name: name } };
+        print("Try to restore '" + name + "' on this device? (type 'YES')", "warn");
+        promptLabel.textContent = "confirm>";
       },
       logout: function () {
         if (!session) { print("Already guest.", "sys"); return; }
@@ -930,18 +1349,31 @@
         if (!session) { print("No logged-in user / key. Use: register <name>", "err"); return; }
         print(session.publicKey);
       },
-      export: function () {
+      export: function (args) {
         if (!session) {
           print("No logged-in user. Use: login <name> or register <name>", "err");
           return;
         }
-        // Public key
+        const all = ((args && args[0]) || "").toLowerCase() === "all";
+        explain("export");
+        print("");
         downloadText(session.name + ".asc", session.publicKey);
         print("Downloaded: " + session.name + ".asc  (public key)", "info");
-        // Private key (armored) — same basename with -private suffix is common; user asked filename = username
-        // Export private as <name>-private.asc so both are usable, public stays <name>.asc
         downloadText(session.name + "-private.asc", session.privateKey);
-        print("Downloaded: " + session.name + "-private.asc  (private key — keep secret)", "warn");
+        print("Downloaded: " + session.name + "-private.asc  (PRIVATE key: your backup, keep it secret)", "warn");
+        const others = session.keys || [];
+        if (all) {
+          others.forEach(function (k) {
+            const tag = String(k.fp || "").slice(-16) || "key";
+            downloadText(session.name + "-" + tag + ".asc", k.publicKey);
+            downloadText(session.name + "-" + tag + "-private.asc", k.privateKey);
+            print("Downloaded: " + session.name + "-" + tag + ".asc and -private.asc  (" + (k.label || "other") + " key)", "warn");
+          });
+          if (!others.length) print("This account has no other keys.", "sys");
+          else print("Your browser may ask to allow multiple downloads.", "sys");
+        } else if (others.length) {
+          print("This account has " + others.length + " other key(s) (imported / previous). 'export all' downloads them too.", "sys");
+        }
       },
       install: function () {
         const st = installState();
@@ -1003,7 +1435,16 @@
         setTimeout(tick, 1000);
       },
       decode: function () { openDecodePanel(); },
+      import: function () {
+        if (!session) { print("Login required. Use: login <name>", "err"); return; }
+        explain("import");
+        openImportPanel();
+      },
       message: async function (args) {
+        if (!session) {
+          print("Guests cannot send messages. Use: register <name> or login <name>", "err");
+          return;
+        }
         if (args.length === 0) {
           interactive = { step: "msg_to", data: {} };
           print("Send message (cancel to abort)", "sys");
@@ -1011,26 +1452,51 @@
           promptLabel.textContent = "to>";
           return;
         }
-        if (args.length < 3) {
-          print("Usage: message <to> <email> <text...>", "err");
+        if (args.length < 2) {
+          print("Usage: message <to> <text...>", "err");
           return;
         }
-        await doSendMessage(args[0], args[1], args.slice(2).join(" "));
+        await doSendMessage(args[0], args.slice(1).join(" "));
       }
     };
 
     async function handleInteractive(line) {
       const t = line.trim();
       if (t.toLowerCase() === "cancel") {
-        interactive = null;
-        input.type = "text";
-        refreshPrompt();
+        resetInteractive();
         print("Cancelled.", "warn");
         return;
       }
       const step = interactive.step;
       const d = interactive.data;
 
+      if (step === "reg_email1") {
+        if (!isValidEmail(t)) { print("Invalid email address.", "err"); return; }
+        d.email1 = t;
+        interactive.step = "reg_email2";
+        print("Repeat the email address:");
+        promptLabel.textContent = "email again>";
+        return;
+      }
+      if (step === "reg_email2") {
+        if (t.toLowerCase() !== d.email1.toLowerCase()) {
+          print("The two addresses do not match. Enter the email address again:", "err");
+          interactive.step = "reg_email1";
+          promptLabel.textContent = "email>";
+          return;
+        }
+        d.email = d.email1;
+        if (!(await requestRegisterOtp(d))) {
+          print("Registration aborted, nothing was saved.", "warn");
+          resetInteractive();
+          return;
+        }
+        interactive.step = "reg_pass";
+        print("Choose a password (min 6 chars, protects key + data):");
+        promptLabel.textContent = "password>";
+        input.type = "password";
+        return;
+      }
       if (step === "reg_pass") {
         if (t.length < 6) { print("Password too short (min 6).", "err"); return; }
         d.password = t;
@@ -1042,65 +1508,255 @@
       if (step === "reg_pass2") {
         if (t !== d.password) {
           print("Mismatch. Restart with: register " + d.name, "err");
-          interactive = null;
-          input.type = "text";
-          refreshPrompt();
+          resetInteractive();
           return;
         }
         print("Generating PGP keypair (curve25519)...", "sys");
         busy = true;
         try {
-          const keys = await generatePGPKey(d.name, d.name + "@" + DOMAIN, d.password);
-          session = {
-            name: d.name,
-            password: d.password,
-            publicKey: keys.publicKey,
-            privateKey: keys.privateKey,
-            messages: [],
-            created: Date.now()
-          };
-          await saveSession();
-          currentUser = d.name;
-          refreshPrompt();
-          print("Done. Logged in as: " + d.name, "info");
-          print("Public key fingerprint: " + fingerprintShort(keys.publicKey), "sys");
-          print("Key and messages are password-protected in this browser.");
+          d.keys = await generatePGPKey(d.name, d.name + "@" + DOMAIN, d.password);
+          d.fp = await primeFingerprint(d.keys.publicKey);
+          if (!d.fp) throw new Error("could not compute the key fingerprint");
         } catch (e) {
           print("Keygen error: " + (e.message || e), "err");
+          busy = false;
+          resetInteractive();
+          return;
+        }
+        busy = false;
+        interactive.step = "reg_otp";
+        input.type = "text";
+        print("Key fingerprint: " + fingerprintShort(d.keys.publicKey), "sys");
+        print("Enter the 6-digit code from the email ('resend' for a new one):");
+        promptLabel.textContent = "code>";
+        return;
+      }
+      if (step === "reg_otp") {
+        if (t.toLowerCase() === "resend") {
+          if (await requestRegisterOtp(d)) print("Enter the new code:");
+          return;
+        }
+        if (!/^\d{6}$/.test(t)) { print("The code is 6 digits ('resend' for a new one).", "err"); return; }
+        busy = true;
+        input.disabled = true;
+        let done = false;
+        try {
+          const tok = await getSessionToken(false);
+          const r = await registryCall("/register/verify", {
+            name: d.name, email: d.email, otp: t,
+            public_key: d.keys.publicKey, fingerprint: d.fp, ip_hash: d.ipHash, token: tok
+          });
+          if (r.ok) {
+            session = {
+              name: d.name, password: d.password,
+              publicKey: d.keys.publicKey, privateKey: d.keys.privateKey, activeLoginPass: true, keys: [],
+              email: d.email, userToken: r.data.user_token, userTokenExp: r.data.exp,
+              messages: [], created: Date.now()
+            };
+            await saveSession();
+            currentUser = d.name;
+            print("Done. Registered and logged in as: " + d.name, "info");
+            print("Public key saved on the server, fingerprint: " + fingerprintShort(d.keys.publicKey), "sys");
+            print("Key and messages are password-protected in this browser.");
+            done = true;
+          } else if (r.status === 400 && r.data.reason === "otp") {
+            print("Wrong code" + (typeof r.data.attempts_left === "number" ? " (" + r.data.attempts_left + " attempt(s) left)" : "") + ". Try again or type 'resend'.", "err");
+          } else if (r.status === 410) {
+            print("The code expired or there were too many wrong attempts. Type 'resend' for a new code.", "err");
+          } else if (r.status === 409) {
+            print("Name '" + d.name + "' was just taken. Registration aborted.", "err");
+            print("Nothing was saved locally.", "warn");
+            done = true;
+          } else {
+            if (r.status === 401) clearToken();
+            print("Registry error (" + r.status + ")" + (r.data.error ? ": " + r.data.error : "") + ". Try again.", "err");
+          }
+        } catch (e) {
+          print("Verification failed: " + (e.message || e), "err");
         } finally {
           busy = false;
-          interactive = null;
-          input.type = "text";
-          refreshPrompt();
+          input.disabled = false;
+          input.focus();
+        }
+        if (done) resetInteractive();
+        return;
+      }
+      if (step === "restore_confirm") {
+        if (t !== "YES") { print("Restore aborted. (You must type YES in capitals.)", "warn"); resetInteractive(); return; }
+        await beginRestore(d.name);
+        return;
+      }
+      if (step === "restore_otp") {
+        if (t.toLowerCase() === "resend") {
+          if (await requestLoginOtp(d.name, "the email address registered for this account")) print("Enter the new code:");
+          return;
+        }
+        if (!/^\d{6}$/.test(t)) { print("The code is 6 digits ('resend' for a new one).", "err"); return; }
+        busy = true;
+        input.disabled = true;
+        try {
+          const tok = await getSessionToken(false);
+          const r = await registryCall("/login/verify", { name: d.name, otp: t, token: tok });
+          if (r.ok) {
+            d.name = r.data.name || d.name;
+            d.userToken = r.data.user_token;
+            d.exp = r.data.exp;
+            d.email = r.data.email;
+            d.fp = normalizeFp(r.data.fingerprint);
+            print("Verified. ✓  The account is yours.", "info");
+            print("Choose a NEW password for this device (min 6 chars). It only protects the keys stored in this browser:");
+            interactive.step = "restore_pass";
+            promptLabel.textContent = "password>";
+            input.type = "password";
+          } else if (r.status === 400 && r.data.reason === "otp") {
+            print("Wrong code" + (typeof r.data.attempts_left === "number" ? " (" + r.data.attempts_left + " attempt(s) left)" : "") + ". Try again or type 'resend'.", "err");
+          } else if (r.status === 410) {
+            print("The code expired or there were too many wrong attempts. Type 'resend' for a new code.", "err");
+          } else {
+            if (r.status === 401) clearToken();
+            print("Registry error (" + r.status + ")" + (r.data.error ? ": " + r.data.error : "") + ". Try again.", "err");
+          }
+        } catch (e) {
+          print("Verification failed: " + (e.message || e), "err");
+        } finally {
+          busy = false;
+          input.disabled = false;
+          input.focus();
         }
         return;
       }
+      if (step === "restore_pass") {
+        if (t.length < 6) { print("Password too short (min 6).", "err"); return; }
+        d.password = t;
+        interactive.step = "restore_pass2";
+        print("Confirm password:");
+        promptLabel.textContent = "confirm>";
+        return;
+      }
+      if (step === "restore_pass2") {
+        if (t !== d.password) {
+          print("The passwords do not match. Choose the new password again:", "err");
+          interactive.step = "restore_pass";
+          promptLabel.textContent = "password>";
+          return;
+        }
+        interactive.step = "restore_choice";
+        input.type = "text";
+        promptLabel.textContent = "restore>";
+        printRestoreOptions(d);
+        return;
+      }
+      if (step === "restore_choice") {
+        const c = t.toLowerCase();
+        if (c === "import") { openImportPanel({ restore: d }); return; }
+        if (c === "newkey") {
+          print("A NEW key replaces the registered public key. Messages encrypted to the OLD key can no", "warn");
+          print("longer be read on any device unless you find the old key file.", "warn");
+          interactive.step = "restore_newkey_confirm";
+          print("Create a new key and replace the registered one? Are you sure? (type 'YES')", "warn");
+          promptLabel.textContent = "confirm>";
+          return;
+        }
+        print("Type 'import', 'newkey' or 'cancel'.", "err");
+        return;
+      }
+      if (step === "restore_newkey_confirm") {
+        if (t !== "YES") {
+          print("Aborted.", "warn");
+          interactive.step = "restore_choice";
+          promptLabel.textContent = "restore>";
+          printRestoreOptions(d);
+          return;
+        }
+        print("Generating PGP keypair (curve25519)...", "sys");
+        busy = true;
+        input.disabled = true;
+        let keys = null;
+        try {
+          keys = await generatePGPKey(d.name, d.name + "@" + DOMAIN, d.password);
+          const fp = await primeFingerprint(keys.publicKey);
+          if (!fp) throw new Error("could not compute the key fingerprint");
+          const r = await registryCall("/keys/update", { public_key: keys.publicKey, fingerprint: fp, user_token: d.userToken });
+          if (!r.ok) {
+            print("The registry refused the new key (" + r.status + ")" + (r.data.error ? ": " + r.data.error : "") + ".", "err");
+            keys = null;
+          }
+        } catch (e) {
+          print("New key failed: " + (e.message || e), "err");
+          keys = null;
+        } finally {
+          busy = false;
+          input.disabled = false;
+          input.focus();
+        }
+        if (!keys) {
+          interactive.step = "restore_choice";
+          input.type = "text";
+          promptLabel.textContent = "restore>";
+          printRestoreOptions(d);
+          return;
+        }
+        await finishRestore(d, keys.publicKey, keys.privateKey, true);
+        return;
+      }
       if (step === "login_pass") {
+        let needOtp = false;
         try {
           session = await loadUser(d.name, t);
+          await primeFingerprint(session.publicKey);
+          for (const k of session.keys) await primeFingerprint(k.publicKey);
           currentUser = session.name;
           refreshPrompt();
           print("Welcome, " + session.name, "info");
+          if (!session.email) {
+            print("This local account is not registered on the server (created before email verification).", "warn");
+            print("Sending messages is disabled. Use nuke, then register.", "warn");
+          } else {
+            needOtp = !hasUserToken();
+          }
         } catch (e) {
           print("Wrong password or corrupted data.", "err");
-        } finally {
-          interactive = null;
-          input.type = "text";
-          refreshPrompt();
         }
+        if (needOtp) { await startLoginOtp(); return; }
+        resetInteractive();
+        return;
+      }
+      if (step === "login_otp") {
+        if (t.toLowerCase() === "resend") { await startLoginOtp(); return; }
+        if (!/^\d{6}$/.test(t)) { print("The code is 6 digits ('resend' for a new one).", "err"); return; }
+        busy = true;
+        input.disabled = true;
+        let done = false;
+        try {
+          const tok = await getSessionToken(false);
+          const r = await registryCall("/login/verify", { name: session.name, otp: t, token: tok });
+          if (r.ok) {
+            session.userToken = r.data.user_token;
+            session.userTokenExp = r.data.exp;
+            await saveSession();
+            print("Verified. ✓  You can send messages now.", "info");
+            done = true;
+          } else if (r.status === 400 && r.data.reason === "otp") {
+            print("Wrong code" + (typeof r.data.attempts_left === "number" ? " (" + r.data.attempts_left + " attempt(s) left)" : "") + ". Try again or type 'resend'.", "err");
+          } else if (r.status === 410) {
+            print("The code expired or there were too many wrong attempts. Type 'resend' for a new code.", "err");
+          } else {
+            if (r.status === 401) clearToken();
+            print("Registry error (" + r.status + ")" + (r.data.error ? ": " + r.data.error : "") + ". Try again.", "err");
+          }
+        } catch (e) {
+          print("Verification failed: " + (e.message || e), "err");
+        } finally {
+          busy = false;
+          input.disabled = false;
+          input.focus();
+        }
+        if (done) resetInteractive();
         return;
       }
       if (step === "msg_to") {
         if (!t) { print("Enter a recipient.", "err"); return; }
         d.to = t;
-        interactive.step = "msg_email";
-        print("Your email address:");
-        promptLabel.textContent = "email>";
-        return;
-      }
-      if (step === "msg_email") {
-        if (!isValidEmail(t)) { print("Invalid email.", "err"); return; }
-        d.email = t;
         interactive.step = "msg_body";
         print("Message (Enter to send):");
         promptLabel.textContent = "msg>";
@@ -1109,7 +1765,7 @@
       if (step === "msg_body") {
         interactive = null;
         refreshPrompt();
-        await doSendMessage(d.to, d.email, t);
+        await doSendMessage(d.to, t);
         return;
       }
       if (step === "install_confirm") {
@@ -1139,6 +1795,7 @@
         refreshPrompt();
         if (t === "YES") {
           localStorage.removeItem(STORAGE_KEY);
+          clearToken();
           session = null;
           currentUser = "guest";
           cmdHistory = [];
@@ -1165,6 +1822,31 @@
       }, 500);
     }
 
+    // Keys available for decryption: the registered (active) key first, then imported / previous ones.
+    function decodeKeyList() {
+      const list = [];
+      if (!session) return list;
+      if (session.privateKey) {
+        list.push({ label: "registered", publicKey: session.publicKey, privateKey: session.privateKey, loginPass: session.activeLoginPass !== false });
+      }
+      (session.keys || []).forEach(function (k) {
+        list.push({ label: k.label || "imported", publicKey: k.publicKey, privateKey: k.privateKey, loginPass: !!k.loginPass });
+      });
+      return list;
+    }
+    function updateDecodePassUi() {
+      const sel = document.getElementById("decodeKey");
+      const k = decodeKeyList()[parseInt(sel.value, 10) || 0];
+      const label = document.getElementById("decodePassLabel");
+      const pass = document.getElementById("decodePass");
+      if (k && k.loginPass) {
+        label.textContent = "Passphrase (optional — leave empty to use your login password)";
+        pass.placeholder = "Leave empty → use login password";
+      } else {
+        label.textContent = "Passphrase of this key (may differ from your login password; empty only if the key is not protected)";
+        pass.placeholder = "Key passphrase";
+      }
+    }
     function openDecodePanel() {
       document.getElementById("decodeModal").classList.add("open");
       document.getElementById("decodeCipher").value = "";
@@ -1175,18 +1857,28 @@
 
       const info = document.getElementById("decodeKeyInfo");
       const passWrap = document.getElementById("decodePassWrap");
+      const keyWrap = document.getElementById("decodeKeyWrap");
+      const sel = document.getElementById("decodeKey");
 
-      if (session && session.privateKey) {
-        info.textContent = "Key: " + session.name + " (registered)  ·  " + fingerprintShort(session.publicKey);
+      const keys = decodeKeyList();
+      if (session && keys.length) {
+        info.textContent = "Logged in as " + session.name + "  ·  " + keys.length + " key(s) available";
         info.style.color = "#8cf";
-        // passphrase optional — auto-uses session.password
+        sel.innerHTML = "";
+        keys.forEach(function (k, i) {
+          const o = document.createElement("option");
+          o.value = String(i);
+          o.textContent = k.label + " · " + fingerprintShort(k.publicKey) + (k.loginPass ? "" : " · own passphrase");
+          sel.appendChild(o);
+        });
+        sel.onchange = updateDecodePassUi;
+        keyWrap.style.display = "";
         passWrap.style.display = "";
-        document.getElementById("decodePassLabel").textContent =
-          "Passphrase (optional — leave empty to use your login password)";
-        document.getElementById("decodePass").placeholder = "Leave empty → use session password";
+        updateDecodePassUi();
       } else {
-        info.textContent = "No registered key loaded. Run: login <name>  or  register <name>";
+        info.textContent = "No key loaded. Run: login <name>  or  register <name>";
         info.style.color = "#ffaa00";
+        keyWrap.style.display = "none";
         passWrap.style.display = "none";
       }
     }
@@ -1199,26 +1891,121 @@
       const cipher = document.getElementById("decodeCipher").value.trim();
       const passInput = document.getElementById("decodePass").value;
       const resEl = document.getElementById("decodeResult");
-      if (!cipher) {
-        resEl.textContent = "No ciphertext.";
-        resEl.classList.add("show");
-        return;
-      }
-      if (!session || !session.privateKey) {
-        resEl.textContent = "No registered key in session. Use: login <name> or register <name>";
-        resEl.classList.add("show");
-        return;
-      }
-      // Always use the registered user's private key; passphrase defaults to login password
-      const passphrase = passInput || session.password;
+      const show = function (msg) { resEl.textContent = msg; resEl.classList.add("show"); };
+      if (!cipher) { show("No ciphertext."); return; }
+      const keys = decodeKeyList();
+      if (!session || !keys.length) { show("No key in session. Use: login <name> or register <name>"); return; }
+      const k = keys[parseInt(document.getElementById("decodeKey").value, 10) || 0];
+      // Registered key: the passphrase defaults to the login password. Imported keys keep their own passphrase.
+      const passphrase = passInput || (k.loginPass ? session.password : "");
       try {
-        const plain = await decryptMessage(cipher, session.privateKey, passphrase);
-        resEl.textContent = plain;
-        resEl.classList.add("show");
+        show(await decryptMessage(cipher, k.privateKey, passphrase));
       } catch (e) {
-        resEl.textContent = "Decrypt failed: " + (e.message || e) +
-          "\n\nTip: leave passphrase empty to use your login password, or enter the key passphrase.";
-        resEl.classList.add("show");
+        show("Decrypt failed: " + (e.message || e) + "\n\n" + (k.loginPass
+          ? "Tip: leave the passphrase empty to use your login password, or enter the key passphrase."
+          : "Tip: enter the passphrase of this imported key (it may differ from your login password), and make sure the message was encrypted to this key."));
+      }
+    };
+
+    function openImportPanel(opts) {
+      const restore = opts && opts.restore ? opts.restore : null;
+      if (!restore && !session) { print("Login required. Use: login <name>", "err"); return; }
+      restoreCtx = restore;
+      document.getElementById("importKey").value = "";
+      document.getElementById("importPass").value = "";
+      document.getElementById("importPublish").checked = !restore;
+      document.getElementById("importPublishRow").style.display = restore ? "none" : "";
+      const res = document.getElementById("importResult");
+      res.classList.remove("show");
+      res.textContent = "";
+      document.getElementById("importInfo").textContent = restore
+        ? "Restoring '" + restore.name + "': paste the private key whose fingerprint ends with " + restore.fp.slice(-16) +
+          " (the file " + restore.name + "-private.asc). Enter that key's own passphrase (usually your OLD password). Nothing is uploaded."
+        : "Active key: " + fingerprintShort(session.publicKey) + "  ·  the imported key keeps its OWN passphrase; you enter it in decode. It is never uploaded.";
+      document.getElementById("importModal").classList.add("open");
+    }
+    function closeImportPanel() {
+      document.getElementById("importModal").classList.remove("open");
+      input.focus();
+    }
+    document.getElementById("importCancel").onclick = closeImportPanel;
+    document.getElementById("importRun").onclick = async function () {
+      const resEl = document.getElementById("importResult");
+      const say = function (m) { resEl.textContent = m; resEl.classList.add("show"); };
+      const btn = document.getElementById("importRun");
+      const armored = document.getElementById("importKey").value.trim();
+      const pass = document.getElementById("importPass").value;
+      const publish = document.getElementById("importPublish").checked;
+      if (!/BEGIN PGP PRIVATE KEY BLOCK/.test(armored)) { say("This is not an armored PGP private key."); return; }
+      const rc = restoreCtx;
+      if (rc) {
+        // New-device restore: the key must be the one the account was registered with.
+        btn.disabled = true;
+        try {
+          const key = await openpgp.readPrivateKey({ armoredKey: armored });
+          if (!key.isDecrypted()) {
+            try { await openpgp.decryptKey({ privateKey: key, passphrase: pass }); }
+            catch (e) { say("Wrong passphrase for this key."); return; }
+          }
+          const fp = key.getFingerprint().toUpperCase();
+          if (fp !== rc.fp) {
+            say("This key does not match the account: registered ..." + rc.fp.slice(-16) + ", this one ..." + fp.slice(-16) +
+                ". Use the key file exported from '" + rc.name + "'.");
+            return;
+          }
+          const publicKey = key.toPublic().armor();
+          fpCache.set(publicKey, fp);
+          closeImportPanel();
+          await finishRestore(rc, publicKey, armored, pass !== "" && pass === rc.password);
+        } catch (e) {
+          say("Import failed: " + (e.message || e));
+        } finally {
+          btn.disabled = false;
+        }
+        return;
+      }
+      if (!session) { say("Login required."); return; }
+      if (publish && !hasUserToken()) { say("Publishing needs a verified session. Log in again (emailed code) or untick the option."); return; }
+      btn.disabled = true;
+      try {
+        const key = await openpgp.readPrivateKey({ armoredKey: armored });
+        if (!key.isDecrypted()) {
+          try { await openpgp.decryptKey({ privateKey: key, passphrase: pass }); }
+          catch (e) { say("Wrong passphrase for this key."); return; }
+        }
+        const fp = key.getFingerprint().toUpperCase();
+        const activeFp = await primeFingerprint(session.publicKey);
+        if (fp === activeFp || (session.keys || []).some(function (k) { return k.fp === fp; })) {
+          say("This key is already in your account.");
+          return;
+        }
+        const publicKey = key.toPublic().armor();
+        if (publish) {
+          const r = await registryCall("/keys/update", { public_key: publicKey, fingerprint: fp, user_token: session.userToken });
+          if (!r.ok) {
+            if (r.status === 401) { session.userToken = null; session.userTokenExp = 0; await saveSession(); }
+            say("The registry refused the key (" + r.status + ")" + (r.data.error ? ": " + r.data.error : "") + ".");
+            return;
+          }
+          // the previously registered key stays available for decrypting old messages
+          session.keys = session.keys || [];
+          session.keys.push({ fp: activeFp, label: "previous", publicKey: session.publicKey, privateKey: session.privateKey, loginPass: session.activeLoginPass !== false, added: Date.now() });
+          session.publicKey = publicKey;
+          session.privateKey = armored;
+          session.activeLoginPass = false;
+        } else {
+          session.keys = session.keys || [];
+          session.keys.push({ fp: fp, label: "imported", publicKey: publicKey, privateKey: armored, loginPass: false, added: Date.now() });
+        }
+        fpCache.set(publicKey, fp);
+        await saveSession();
+        print("Key imported: " + fp.slice(-16) + (publish ? "  (now your registered key, public part saved on the server)" : ""), "info");
+        print("Its passphrase is not stored: enter it in decode.", "sys");
+        closeImportPanel();
+      } catch (e) {
+        say("Import failed: " + (e.message || e));
+      } finally {
+        btn.disabled = false;
       }
     };
 
@@ -1276,9 +2063,7 @@
         }
       } else if (e.key === "c" && e.ctrlKey) {
         if (interactive) {
-          interactive = null;
-          input.type = "text";
-          refreshPrompt();
+          resetInteractive();
           print("^C", "warn");
           print("Cancelled.", "warn");
           input.value = "";
