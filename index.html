@@ -668,7 +668,7 @@
       const mUrl = link.href;
       let m;
       try {
-        const r = await fetch(mUrl, { credentials: "same-origin" });
+        const r = await fetch(mUrl, { credentials: "same-origin", cache: "no-store" });
         if (!r.ok) { print("Manifest not reachable: HTTP " + r.status + "  " + mUrl, "err"); return; }
         m = await r.json();
       } catch (e) {
@@ -693,9 +693,9 @@
         if (!ic || !ic.src) { problems.push("no " + n + "x" + n + " icon in the manifest"); continue; }
         const u = new URL(ic.src, mUrl).href;
         try {
-          const r = await fetch(u);
+          const r = await fetch(u, { cache: "no-store" });
           const ct = (r.headers && r.headers.get && r.headers.get("content-type")) || "image/";
-          if (!r.ok) problems.push(n + "px icon not reachable: HTTP " + r.status + "  " + u);
+          if (!r.ok) problems.push(n + "px icon not reachable: HTTP " + r.status + "  " + (r.url || u));
           else if (!/^image\//i.test(ct)) problems.push(n + "px icon is not an image (" + ct + ")  " + u);
         } catch (e) {
           problems.push(n + "px icon fetch failed  " + u);
