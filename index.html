@@ -285,9 +285,10 @@
       <div class="nc big" data-title="Message history" data-cols="104">
         <div id="historyInfo" class="nc-info"></div>
         <div id="historyList" class="nc-list" tabindex="0" role="listbox" aria-label="Message history"></div>
-        <div id="historyHint" class="nc-hint"><span class="hint-kb">Up/Down: select   Enter: open/close   Esc: close   (or tap)</span><span class="hint-touch">Tap a message to open or close it</span></div>
+        <div id="historyHint" class="nc-hint"><span class="hint-kb">Up/Down: select or scroll   Enter: open/close   R: send again   Esc: close   (or tap)</span><span class="hint-touch">Tap a message to open or close it; "Send again" re-sends an unsent one</span></div>
         <div class="actions">
           <button type="button" class="secondary" id="historyClose">Close</button>
+          <button type="button" id="historyResend" disabled>Send again</button>
         </div>
       </div>
     </div>
@@ -1367,7 +1368,7 @@
           ["users", "users (DNS + local)"],
           ["about", "short info"],
           ["clear", "clear screen"],
-          ["history", "your sent messages (panel: Up/Down select, Enter opens, Esc closes)"],
+          ["history", "your sent messages (panel: Up/Down select or scroll, Enter opens, R sends an unsent one again, Esc closes)"],
           ["register <name>", "claim a name: email (twice), the emailed code, then a password + PGP keygen"],
           ["login <name>", "login (password, then an emailed code when not verified)"],
           ["logout", "back to guest"],
@@ -2222,6 +2223,7 @@
     let msgDraft = null;             // the history entry of the panel session (kept across retries)
     let msgSending = false;
     let msgSaved = null;             // unsent text, restored when the panel is opened again
+    let msgResending = false;        // the panel was opened from the history to re-send an unsent message
     // What is known about the selected recipient's PGP key:
     //   ready  → the message body is encrypted;   nokey → no key is published, plaintext only after an explicit tick;
     //   error  → a key is published but unavailable: NOTHING is sent;   loading → wait.
@@ -2245,7 +2247,13 @@
         o.textContent = r.role ? r.name + "  (" + r.role + ")" : r.name;
         sel.appendChild(o);
       });
-      if (before && rec.some(function (r) { return r.name === before; })) sel.value = before;
+      if (before && !rec.some(function (r) { return r.name === before; }) && msgResending && msgDraft && msgDraft.to === before) {
+        const o = document.createElement("option");      // a message re-sent from the history keeps its original recipient
+        o.value = before;
+        o.textContent = before;
+        sel.appendChild(o);
+      }
+      if (before && Array.prototype.some.call(sel.options, function (o) { return o.value === before; })) sel.value = before;
       return rec;
     }
     function renderKeyState() {
@@ -2306,33 +2314,50 @@
       }
       if (seq === keyState.seq) renderKeyState();
     }
+    function messagePanelBlocker() {
+      if (!session) return "Guests cannot send messages. Use: register <name> or login <name>";
+      if (!session.email) return "This local account is not registered on the server. Use purge, then register.";
+      if (!hasUserToken()) return "Your session is not verified. Log in again (an emailed code is needed).";
+      return "";
+    }
     function openMessagePanel(pre) {
-      if (!session) { print("Guests cannot send messages. Use: register <name> or login <name>", "err"); return; }
-      if (!session.email) { print("This local account is not registered on the server. Use purge, then register.", "err"); return; }
-      if (!hasUserToken()) { print("Your session is not verified. Log in again (an emailed code is needed).", "err"); return; }
+      const why = messagePanelBlocker();
+      if (why) { print(why, "err"); return; }
       const sel = document.getElementById("messageTo");
       const subj = document.getElementById("messageSubject");
       const area = document.getElementById("messageBody");
       const res = document.getElementById("messageResult");
       const rec = populateRecipients(null);
-      msgDraft = null;
+      const re = pre && pre.resend ? pre.resend : null;   // an unsent message taken from the history
+      msgDraft = re;                                      // a successful send updates THAT history entry (no duplicate)
+      msgResending = !!re;
       let to = null, subject = "", body = "", restored = false;
       const args = (pre && pre.args) || [];
-      if (args.length) {                                   // 'message info text...' still pre-fills the panel
+      if (re) {
+        to = re.to; subject = re.subject || ""; body = re.body || "";
+        if (!rec.some(function (r) { return r.name === to; })) {   // the recipient list changed since: keep the original recipient selectable
+          const o = document.createElement("option");
+          o.value = to;
+          o.textContent = to;
+          sel.appendChild(o);
+        }
+      } else if (args.length) {                           // 'message info text...' still pre-fills the panel
         const hit = rec.find(function (r) { return r.name.toLowerCase() === args[0].toLowerCase(); });
         if (hit) { to = hit.name; body = args.slice(1).join(" "); } else { body = args.join(" "); }
       } else if (msgSaved) {
         to = msgSaved.to; subject = msgSaved.subject; body = msgSaved.body; restored = true;
       }
-      if (to && rec.some(function (r) { return r.name === to; })) sel.value = to;
+      if (to && Array.prototype.some.call(sel.options, function (o) { return o.value === to; })) sel.value = to;
       subj.value = subject;
       area.value = body;
       res.className = "result";
       res.textContent = "";
-      document.getElementById("messageInfo").textContent =
-        "From " + session.name + " (" + maskEmail(session.email) + "), verified. Only the message body is PGP-encrypted; the subject travels in clear text." +
-        (restored ? " Your unsent draft was restored." : "");
-      document.getElementById("messageModal").classList.add("open");
+      const base = "From " + session.name + " (" + maskEmail(session.email) + "), verified. Only the message body is PGP-encrypted; the subject travels in clear text.";
+      document.getElementById("messageInfo").textContent = re
+        ? "Sending again. " + (re.status === "sending"
+            ? "This message MAY ALREADY HAVE BEEN SENT (the page was closed while sending)."
+            : "This message was NOT sent" + (re.error ? " (" + re.error + ")" : "") + ".") + " " + base
+        : base + (restored ? " Your unsent draft was restored." : "");      document.getElementById("messageModal").classList.add("open");
       (subject ? area : subj).focus();
       if (remoteState === "ok") {
         prepareRecipientKey(sel.value);
@@ -2351,7 +2376,7 @@
       if (msgSending) return;
       const subj = document.getElementById("messageSubject").value;
       const body = document.getElementById("messageBody").value;
-      msgSaved = keepDraft !== false && (subj.trim() || body.trim())
+      msgSaved = keepDraft !== false && !msgResending && (subj.trim() || body.trim())   // a re-sent message is already in the history: no draft
         ? { to: document.getElementById("messageTo").value, subject: subj, body: body }
         : null;
       document.getElementById("messageModal").classList.remove("open");
@@ -2449,9 +2474,15 @@
         }
         if (res && res.ok) {
           msgDraft.status = "sent";
+          msgDraft.error = null;
+          msgDraft.ts = Date.now();                         // the date shown in the history is when it was really sent
+          const all = session.messages;
+          const at = all.indexOf(msgDraft);
+          if (at >= 0 && at !== all.length - 1) { all.splice(at, 1); all.push(msgDraft); }   // a re-sent message becomes the newest one
           await saveSession();
           msgSaved = null;
           msgDraft = null;
+          msgResending = false;
           document.getElementById("messageModal").classList.remove("open");
           closed = true;
           print("Message sent. ✓  (" + (usedPgp ? "PGP-encrypted for " + to + ", key ..." + String(keyState.fp).slice(-16) : "UNENCRYPTED, as you confirmed") + "; saved in history)", "info");
@@ -2471,7 +2502,7 @@
               msgDraft.error = "session expired";
             } else {
               problem = ["Worker error (" + res.status + "): the message is NOT sent. It is kept in the history as failed.", String(data.error || txt).slice(0, 180)];
-              msgDraft.error = "HTTP " + res.status;
+              msgDraft.error = "HTTP " + res.status + (data.error ? ": " + String(data.error).slice(0, 120) : "");
             }
           }
           msgDraft.status = "failed";
@@ -2528,15 +2559,15 @@
     }
     function statusTag(e) {
       const tags = [];
-      if (e.encrypted) tags.push("PGP");
-      if (e.status === "failed") tags.push("FAILED");
+      if (e.encrypted) tags.push("PGP");                       // the body was PGP-encrypted
+      if (e.status === "failed") tags.push("NOT SENT");        // …but the server did not take it (limit, network, …)
       else if (e.status === "sending") tags.push("unconfirmed");
-      return tags.length ? "  [" + tags.join(" ") + "]" : "";
+      return tags.length ? "  [" + tags.join("] [") + "]" : "";
     }
     function fillHistoryItem(i) {
       const e = hist.items[i];
       const r = hist.els[i];
-      r.l1.textContent = (hist.open === i ? "▾ " : "▸ ") + fmtLocal(e.ts) + "  → " + e.to + statusTag(e);
+      r.l1.textContent = (hist.open === i ? "▾ " : "▸ ") + fmtLocal(e.ts) + statusTag(e) + "  → " + e.to;
       r.subj.textContent = e.subject || "(no subject)";
       const snip = snippetOf(e);
       r.snip.textContent = snip ? "  —  " + snip : "";
@@ -2588,7 +2619,11 @@
       hist.els[i].full = full;
       hist.open = i;
       fillHistoryItem(i);
-      if (hist.els[i].el.scrollIntoView) hist.els[i].el.scrollIntoView({ block: "nearest" });
+      const list = document.getElementById("historyList");
+      const er = hist.els[i].el.getBoundingClientRect();
+      const lr = list.getBoundingClientRect();
+      if (er.height > lr.height && lr.height > 0) list.scrollTop += er.top - lr.top;   // taller than the list: show its head first
+      else if (hist.els[i].el.scrollIntoView) hist.els[i].el.scrollIntoView({ block: "nearest" });
     }
     function closeHistoryItem() {
       const i = hist.open;
@@ -2609,6 +2644,21 @@
       hist.els[i].el.classList.add("nc-sel");
       hist.els[i].el.setAttribute("aria-selected", "true");
       if (hist.els[i].el.scrollIntoView) hist.els[i].el.scrollIntoView({ block: "nearest" });
+      updateResendButton();
+    }
+    function isUnsent(e) { return !!e && (e.status === "failed" || e.status === "sending"); }
+    // An old entry that stored only the encrypted text cannot be sent again: it no longer has what you wrote.
+    function canResend(e) { return !!session && isUnsent(e) && !(e.encrypted && !e.plain); }
+    function updateResendButton() {
+      document.getElementById("historyResend").disabled = !(hist.items.length && canResend(hist.items[hist.sel]));
+    }
+    function resendSelected() {
+      const e = hist.items[hist.sel];
+      if (!canResend(e)) return;
+      const why = messagePanelBlocker();
+      if (why) { document.getElementById("historyInfo").textContent = why; return; }   // stay in the history and say why
+      document.getElementById("historyModal").classList.remove("open");
+      openMessagePanel({ resend: e });
     }
     function toggleHistory(i) {
       if (hist.open === i) closeHistoryItem(); else openHistoryItem(i);
@@ -2633,6 +2683,7 @@
         hist.els[0].el.setAttribute("aria-selected", "true");
         info.textContent = (session ? session.name : "guest") + ": " + hist.items.length + " message(s), newest first";
       }
+      updateResendButton();
       document.getElementById("historyModal").classList.add("open");
       list.scrollTop = 0;
       list.focus();
@@ -2641,24 +2692,55 @@
       document.getElementById("historyModal").classList.remove("open");
       input.focus();
     };
+    // A long open message is read with the arrow keys: they SCROLL it. Only at its end does the next tap (or half a
+    // second of holding the key) move on to the next message, so a scroll never jumps away by accident.
+    const HISTORY_EDGE_MS = 500;
+    const edge = { dir: 0, since: 0 };
+    function historyLine() { return (parseFloat(getComputedStyle(document.getElementById("historyList")).fontSize) || 16) * 1.3; }
+    function scrollOpenMessage(dir, big, repeat) {
+      if (hist.open < 0 || hist.open !== hist.sel) return false;
+      const list = document.getElementById("historyList");
+      const er = hist.els[hist.open].el.getBoundingClientRect();
+      const lr = list.getBoundingClientRect();
+      const room = dir > 0 ? er.bottom - lr.bottom : lr.top - er.top;   // how much of the open message is out of view that way
+      if (room <= 1) return false;
+      const line = historyLine();
+      const step = big ? Math.max(3 * line, list.clientHeight - 2 * line) : (repeat ? line : 3 * line);
+      list.scrollTop += dir * Math.min(room, step);                      // never past the end of the message
+      return true;
+    }
     document.getElementById("historyList").addEventListener("keydown", function (e) {
       const n = hist.items.length;
       if (!n) return;
       let handled = true;
       switch (e.key) {
-        case "ArrowDown": selectHistory(hist.sel + 1); break;
-        case "ArrowUp": selectHistory(hist.sel - 1); break;
-        case "PageDown": selectHistory(hist.sel + 5); break;
-        case "PageUp": selectHistory(hist.sel - 5); break;
+        case "ArrowDown": case "ArrowUp": case "PageDown": case "PageUp": {
+          const dir = e.key === "ArrowDown" || e.key === "PageDown" ? 1 : -1;
+          const big = e.key === "PageDown" || e.key === "PageUp";
+          if (scrollOpenMessage(dir, big, e.repeat)) { edge.dir = 0; break; }
+          if (hist.open >= 0 && hist.open === hist.sel && e.repeat) {      // still holding the key at the end of the message
+            const now = Date.now();
+            if (edge.dir !== dir) { edge.dir = dir; edge.since = now; }
+            if (now - edge.since < HISTORY_EDGE_MS) break;                  // wait half a second, or release and press again
+          }
+          edge.dir = 0;
+          selectHistory(hist.sel + dir * (big ? 5 : 1));
+          break;
+        }
         case "Home": selectHistory(0); break;
         case "End": selectHistory(n - 1); break;
         case "Enter": case " ": toggleHistory(hist.sel); break;
         case "ArrowRight": openHistoryItem(hist.sel); break;
         case "ArrowLeft": closeHistoryItem(); break;
+        case "r": case "R":
+          if (e.ctrlKey || e.metaKey || e.altKey) handled = false; else resendSelected();
+          break;
         default: handled = false;
       }
       if (handled) e.preventDefault();
     });
+    document.getElementById("historyList").addEventListener("keyup", function () { edge.dir = 0; });
+    document.getElementById("historyResend").onclick = resendSelected;
     document.getElementById("historyList").addEventListener("click", function (e) {
       if (e.target.closest(".nc-full")) return;            // selecting / copying the open text must not close it
       const it = e.target.closest(".nc-item");
