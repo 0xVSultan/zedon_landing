@@ -3,14 +3,83 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="description" content="Terminal-style homepage of Zedon Technologies: contact us from the command line with PGP-encrypted messages. Skip the graphics. Tell the story!">
+  <link rel="canonical" href="https://zedon.tech/">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="zedon.tech">
+  <meta property="og:url" content="https://zedon.tech/">
+  <meta property="og:title" content="zedon.tech">
+  <meta property="og:description" content="Skip the graphics. Tell the story! A terminal-style homepage: contact us from the command line, PGP-encrypted.">
+  <meta property="og:locale" content="en_US">
+
+  <meta property="og:image" content="https://zedon.tech/og-1200x630.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="NOTICE dialog in a terminal window: “Skip the graphics. Tell the story!” in large block letters, with an OK button.">
+
+  <meta property="og:image" content="https://zedon.tech/og-square-600x600.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="600">
+  <meta property="og:image:height" content="600">
+  <meta property="og:image:alt" content="NOTICE dialog in a terminal window: “Skip the graphics. Tell the story!” in four lines of large block letters, with an OK button.">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://zedon.tech/og-x-1200x600.png">
+  <meta name="twitter:image:alt" content="NOTICE dialog in a terminal window: “Skip the graphics. Tell the story!” in large block letters, with an OK button.">
   <meta name="theme-color" content="#4caf50" />
-  <meta name="description" content="zedon.tech terminal" />
   <title>zedon.tech — terminal</title>
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="android-chrome-192x192.png" />
   <link rel="icon" type="image/png" sizes="512x512" href="android-chrome-512x512.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
   <link rel="manifest" href="site.webmanifest" />
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://zedon.tech/#org",
+      "name": "Zedon Technologies Hungary LLC",
+      "alternateName": ["Zedon"],
+      "url": "https://zedon.tech/",
+      "logo": "https://zedon.tech/android-chrome-512x512.png",
+      "email": "info@zedon.tech",
+      "sameAs": [
+        "https://zedon.technology/",
+        "https://zedon.cloud/"
+      ]
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://zedon.tech/#site",
+      "url": "https://zedon.tech/",
+      "name": "zedon.tech",
+      "alternateName": ["Zedon"],
+      "inLanguage": "en",
+      "publisher": { "@id": "https://zedon.tech/#org" }
+    },
+    {
+      "@type": "WebPage",
+      "@id": "https://zedon.tech/#page",
+      "url": "https://zedon.tech/",
+      "name": "zedon.tech",
+      "description": "Terminal-style homepage of Zedon Technologies: contact us from the command line with PGP-encrypted messages. Skip the graphics. Tell the story!",
+      "inLanguage": "en",
+      "isPartOf": { "@id": "https://zedon.tech/#site" },
+      "about": { "@id": "https://zedon.tech/#org" },
+      "primaryImageOfPage": {
+        "@type": "ImageObject",
+        "url": "https://zedon.tech/og-1200x630.png",
+        "width": 1200,
+        "height": 630
+      }
+    }
+  ]
+}
+</script>
   <script src="https://unpkg.com/openpgp@5.11.2/dist/openpgp.min.js"></script>
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
   <style>
